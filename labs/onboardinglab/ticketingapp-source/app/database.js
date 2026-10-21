@@ -1,6 +1,6 @@
 'use strict';
 
-const DB_TIMEOUT_MS = 5000;
+const DB_TIMEOUT_MS = 4500;
 
 function databaseConfig(env, getAccessToken) {
   const port = Number(env.POSTGRES_PORT || 5432);
