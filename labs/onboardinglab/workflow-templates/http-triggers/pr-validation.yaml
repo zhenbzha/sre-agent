@@ -1,7 +1,7 @@
 name: ticketing-pr-validation
 trigger:
   type: http-trigger
-  description: Validate a GitHub pull request against the ticket reservation service's reliability and security expectations.
+  description: Validate a GitHub pull request against the SCM material request service's reliability and security expectations.
   action_mode: Review
   handling_agent: pr-validator
   prompt: |

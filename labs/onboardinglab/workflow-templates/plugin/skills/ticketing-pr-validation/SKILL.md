@@ -1,9 +1,9 @@
 ---
 name: ticketing-pr-validation
-description: Validate ticket reservation pull requests using repository evidence and optional read-only production baselines.
+description: Validate SCM material request pull requests using repository evidence and optional read-only production baselines.
 ---
 
-# Ticket reservation PR validation
+# SCM material request PR validation
 
 Use when a verified GitHub pull-request event is received through the onboarding lab HTTP trigger.
 

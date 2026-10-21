@@ -133,7 +133,7 @@ $DpSkippedItems = [System.Collections.Generic.List[string]]::new()
 $ExtendedItemFailures = [System.Collections.Generic.List[string]]::new()
 
 try {
-    $null = az account get-access-token --resource https://azuresre.dev --query accessToken -o tsv 2>$null
+    $null = az account get-access-token --subscription $Subscription --resource https://azuresre.dev --query accessToken -o tsv 2>$null
     if ($LASTEXITCODE -eq 0) {
         $DpTokenAvailable = $true
         Write-Host "Data-plane:     token available"
@@ -150,7 +150,7 @@ $extras = Get-Content -Raw $ExtrasFile | ConvertFrom-Json
 
 # ── Helper: get data-plane bearer token ─────────────────────────────────────
 function Get-DpToken {
-    $tok = az account get-access-token --resource https://azuresre.dev --query accessToken -o tsv 2>$null
+    $tok = az account get-access-token --subscription $Subscription --resource https://azuresre.dev --query accessToken -o tsv 2>$null
     if ($LASTEXITCODE -ne 0 -or -not $tok) {
         throw "Could not get data-plane token (audience https://azuresre.dev)"
     }
@@ -1199,7 +1199,7 @@ if ($HttpTriggerUrl) {
 
     if ($whEnabled) {
         # Check if Logic App already exists
-        $existingLa = az resource list -g $ResourceGroup --resource-type Microsoft.Logic/workflows `
+        $existingLa = az resource list --subscription $Subscription -g $ResourceGroup --resource-type Microsoft.Logic/workflows `
             --query "[?name=='$AgentName-webhook-bridge'].name" -o tsv 2>$null
         if ($existingLa) {
             $whCallback = az rest --method POST `
@@ -1213,10 +1213,11 @@ if ($HttpTriggerUrl) {
             Write-Host "-- Deploying webhook bridge Logic App --"
             Write-Host "  Trigger URL: $HttpTriggerUrl"
             $bicepPath = Join-Path $PSScriptRoot "logic-app-bridge.bicep"
-            $location = az group show -n $ResourceGroup --query location -o tsv 2>$null
+            $location = az group show --subscription $Subscription -n $ResourceGroup --query location -o tsv 2>$null
             $stderrPath = Join-Path ([System.IO.Path]::GetTempPath()) "logic-app-bridge-$([guid]::NewGuid()).stderr"
             try {
                 $laResultRaw = az deployment group create `
+                    --subscription $Subscription `
                     --resource-group $ResourceGroup `
                     --template-file $bicepPath `
                     --parameters agentName=$AgentName location=$location triggerUrl=$HttpTriggerUrl `

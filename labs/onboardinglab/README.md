@@ -834,6 +834,11 @@ Windows:
 
 The installer verifies the skill, subagent tools and allowed skill, Review-mode trigger binding, Logic App, and callback URL before printing the callback.
 
+The PowerShell PR installer uses the supplied subscription for its data-plane
+token and bridge deployment, without changing the active Azure CLI subscription.
+The bridge uses the agent resource group's location (France Central for
+`sre-agent-scm`).
+
 **Connect the repository workflow**
 
 Run the repository configurator after the Scenario 3 installer. It copies the trusted workflow to the participant's `sre-agent` fork on its default branch, commits and pushes it when needed, retrieves the Logic App callback directly from Azure, stores it as the `SRE_AGENT_WEBHOOK_URL` Actions secret, and verifies both resources.

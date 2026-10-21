@@ -187,7 +187,11 @@ def main():
             "labs/onboardinglab/ticketingapp-source/app/test/handler.test.js",
             cwd=repo,
         )
-        run("git", "commit", "-m", config["title"], cwd=repo)
+        run(
+            "git", "commit", "-m", config["title"],
+            "--trailer", "Co-authored-by: Copilot <223556219+Copilot@users.noreply.github.com>",
+            cwd=repo,
+        )
         run("git", "push", "--set-upstream", "origin", config["branch"], cwd=repo)
         url = run(
             "gh", "pr", "create",

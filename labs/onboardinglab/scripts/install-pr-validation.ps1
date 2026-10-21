@@ -68,7 +68,7 @@ try {
     Write-Host 'Installing Scenario 3 HTTP trigger and webhook bridge...'
     & $applyExtras -Subscription $Subscription -ResourceGroup $resourceGroup -AgentName $AgentName -ExtrasFile $triggerExtrasFile
 
-    $token = (& az account get-access-token --resource https://azuresre.dev --query accessToken --output tsv).Trim()
+    $token = (& az account get-access-token --subscription $Subscription --resource https://azuresre.dev --query accessToken --output tsv).Trim()
     $headers = @{ Authorization = "Bearer $token" }
     $expectedAgent = $extras.installerRequirements.agentName
     $installedAgent = Invoke-RestMethod -Uri "$endpoint/api/v2/extendedAgent/agents/$expectedAgent" -Headers $headers

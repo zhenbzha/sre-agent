@@ -105,7 +105,11 @@ def main():
         (shutil.which("git"), "diff", "--cached", "--quiet"), cwd=repo, check=False
     ).returncode
     if staged == 1:
-        run("git", "commit", "-m", "Add SRE Agent PR validation workflow", cwd=repo)
+        run(
+            "git", "commit", "-m", "Add SRE Agent PR validation workflow",
+            "--trailer", "Co-authored-by: Copilot <223556219+Copilot@users.noreply.github.com>",
+            cwd=repo,
+        )
         run("git", "push", "origin", default_branch, cwd=repo)
     elif staged != 0:
         raise SystemExit("Could not inspect the staged workflow change.")
