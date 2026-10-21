@@ -8,6 +8,7 @@ import os
 import re
 import subprocess
 import sys
+import time
 from pathlib import Path
 from urllib.parse import quote
 
@@ -64,6 +65,27 @@ def pr_identity(pr):
     )
 
 
+def current_event_pr(api, endpoint, expected):
+    # Event delivery can precede the REST view of a reopened or updated PR.
+    fields = ("number", "url", "base_repo", "base_ref", "base_sha",
+              "head_repo", "head_ref", "head_sha")
+    for attempt in range(4):
+        current = api(endpoint)
+        differences = [
+            field for field, actual, wanted in
+            zip(fields, pr_identity(current), pr_identity(expected)) if actual != wanted
+        ]
+        if current["state"] == "open" and not differences:
+            return current
+        if attempt < 3:
+            time.sleep(2 ** attempt)
+    details = ", ".join(differences) or "state"
+    raise ValueError(
+        f"PR changed since this event or has not propagated (mismatch: {details}; "
+        f"state: {current['state']}); use its latest event instead."
+    )
+
+
 def serialize(payload):
     encoded = json.dumps(payload, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
     require(len(encoded) <= MAX_PAYLOAD_BYTES,
@@ -86,9 +108,7 @@ def build_payload(event, repository, api=github_api):
     head_sha = sha(pr["head"]["sha"])
     head_repo = slug(pr["head"]["repo"]["full_name"])
     pr_endpoint = f"repos/{repository}/pulls/{number}"
-    current = api(pr_endpoint)
-    require(current["state"] == "open" and pr_identity(current) == pr_identity(pr),
-            "PR changed since this event; use its latest event instead.")
+    current = current_event_pr(api, pr_endpoint, pr)
     count = current["changed_files"]
     require(type(count) is int and 0 < count <= MAX_CHANGED_FILES,
             "PR must contain between 1 and 100 changed files.")

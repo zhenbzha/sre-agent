@@ -921,6 +921,9 @@ to the merge base and head. The head snapshot includes the changed files plus
 the database helper, handler, server, package manifest, app README, browser code
 and handler tests. Before sending, the collector verifies blob hashes and checks
 that the PR has not moved since the event or during collection.
+The initial metadata check allows four reads with 1/2/4-second waits for event
+propagation; it still requires an exact identity match and reports the
+mismatched fields on failure. Collection never proceeds on a stale identity.
 
 Collection fails explicitly for more than 100 changed files, missing patches,
 truncated trees, unavailable/non-text/non-regular files, files over 64 KiB, or a

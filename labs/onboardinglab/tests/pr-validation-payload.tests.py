@@ -105,6 +105,9 @@ class GitHub:
 class PayloadTests(unittest.TestCase):
     def setUp(self):
         self.github = GitHub()
+        sleep = patch.object(collector.time, "sleep")
+        self.sleep = sleep.start()
+        self.addCleanup(sleep.stop)
 
     def test_pins_before_to_merge_base_and_context_to_exact_head(self):
         payload = self.github.collect()
@@ -139,11 +142,33 @@ class PayloadTests(unittest.TestCase):
             f"repos/{REPO}/compare/{BASE}...contributor:{HEAD}?per_page=1", self.github.calls,
         )
 
-    def test_stale_event_fails_before_source_collection(self):
+    def test_stale_event_fails_after_bounded_metadata_readback(self):
         self.github.pr["head"]["sha"] = "d" * 40
         with self.assertRaisesRegex(ValueError, "changed since this event"):
             self.github.collect()
-        self.assertEqual(len(self.github.calls), 1)
+        self.assertEqual(len(self.github.calls), 4)
+        self.assertEqual([call.args[0] for call in self.sleep.call_args_list], [1, 2, 4])
+        self.assertTrue(all(call.endswith("/pulls/2") for call in self.github.calls))
+
+    def test_event_can_arrive_before_reopened_state_propagates(self):
+        stale = copy.deepcopy(self.github.pr)
+        stale["state"] = "closed"
+        original_api = self.github.api
+        calls = 0
+
+        def api(endpoint):
+            nonlocal calls
+            calls += 1
+            return stale if calls == 1 else original_api(endpoint)
+
+        payload = collector.build_payload(self.github.event, REPO, api)
+        self.assertEqual(payload["head_sha"], HEAD)
+        self.sleep.assert_called_once_with(1)
+
+    def test_mismatch_error_identifies_the_field_without_sending_source(self):
+        self.github.pr["base"]["sha"] = "d" * 40
+        with self.assertRaisesRegex(ValueError, "mismatch: base_sha"):
+            self.github.collect()
 
     def test_pr_moving_during_collection_fails_before_delivery(self):
         self.github.after_collection = copy.deepcopy(self.github.pr)
