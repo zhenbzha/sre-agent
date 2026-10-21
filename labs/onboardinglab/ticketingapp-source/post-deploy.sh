@@ -1,6 +1,11 @@
 #!/usr/bin/env bash
 set -euo pipefail
 project="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+if [[ "${LAB_WORKLOAD_OPTION:-}" == app-service-postgresql ]]; then
+  pwsh -NoProfile -File "$project/initialize-database.ps1" \
+    -Subscription "$AZURE_SUBSCRIPTION_ID" -ResourceGroup "$AZURE_RESOURCE_GROUP" \
+    -AppName "$SERVICE_CHECKOUT_NAME"
+fi
 setup="$project/../scripts/setup.ps1"
 if [[ ! -f "$setup" ]]; then
   if [[ "${ONBOARDING_CONFIGURE_AGENT:-false}" == true ]]; then

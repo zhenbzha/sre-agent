@@ -8,13 +8,13 @@ prerequisites:
 
 trigger:
   type: scheduled-task
-  description: Analyze ticket reservation health and return read-only findings in the task thread.
+  description: Analyze SCM material request health and return read-only findings in the task thread.
   schedule: 0 9 * * 1-5
   enabled: true
   action_mode: Review
   handling_agent: health-report-investigator
   prompt: |
-    Run the scheduled ticket reservation health check.
+    Run the scheduled SCM material request health check.
 
 custom_agent:
   name: health-report-investigator
@@ -36,7 +36,7 @@ custom_agent:
     - name: email-incident-followup
       source: ../plugin/skills/email-incident-followup/SKILL.md
   instructions: |
-    Use the proactive-health-check skill to assess ticket reservation availability,
+    Use the proactive-health-check skill to assess SCM material request availability,
     failure rate, latency, dependency health, and resource health over the last
     24 hours. Compare with the prior seven-day baseline only when sufficient
     history exists. Display evidence-grounded charts where they clarify health:

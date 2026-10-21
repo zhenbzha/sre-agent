@@ -127,7 +127,7 @@ test('checkout emits sanitized 200/503 request envelopes through the installed S
         async connect() {
           if (!success) throw new Error(`ECONNREFUSED private.example.test ${secret}`);
         },
-        async query() {},
+        async query() { return { rows: [{ request_id: '42' }] }; },
         async end() {},
         connection: { stream: { destroy() {} } },
       }),
@@ -137,11 +137,14 @@ test('checkout emits sanitized 200/503 request envelopes through the installed S
       writeHead(status) { this.status = status; },
       end(body) { this.body = JSON.parse(body); },
     };
-    await handler({
+    const incoming = Object.assign(new EventEmitter(), {
       method: 'POST', url: `/checkout?token=${secret}`,
-      headers: { host: `${secret}.example.test`, authorization: `Bearer ${secret}` },
-      resume() {},
-    }, response);
+      headers: { 'content-type': 'application/json' }, resume() {}, setEncoding() {},
+    });
+    const pending = handler(incoming, response);
+    incoming.emit('data', JSON.stringify({ material: secret, quantity: 2, plant: secret }));
+    incoming.emit('end');
+    await pending;
     const status = success ? 200 : 503;
     assert.equal(response.status, status);
     assert.equal(response.body.success, success);
@@ -155,7 +158,7 @@ test('checkout emits sanitized 200/503 request envelopes through the installed S
     assert.equal(request.success, success);
     assert.equal(request.url, 'http://localhost/checkout');
     assert.deepEqual(request.properties, {
-      simulated: 'true', outcome: success ? 'connected' : 'unavailable',
+      simulated: 'true', outcome: success ? 'saved' : 'unavailable',
     });
     const dependency = envelopes.find((item) => item.data.baseType === 'RemoteDependencyData');
     assert.equal(dependency.data.baseData.name, 'PostgreSQL connectivity');

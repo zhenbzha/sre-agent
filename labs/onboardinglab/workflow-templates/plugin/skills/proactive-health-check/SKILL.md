@@ -1,15 +1,15 @@
 ---
 name: proactive-health-check
-description: Assess ticket reservation availability, failures, latency, dependencies, and Azure resource health using read-only evidence.
+description: Assess SCM material request availability, failures, latency, dependencies, and Azure resource health using read-only evidence.
 ---
 
 # Proactive health check
 
-Use the connected application telemetry and read-only Azure tools to assess the ticket reservation service.
+Use the connected application telemetry and read-only Azure tools to assess the SCM material request service. Keep the `POST /checkout` telemetry filter; resource and workflow identifiers have not changed.
 
 1. Confirm the UTC analysis window and the Application Insights resource being queried.
-2. Measure ticket reservation request volume, availability, failure rate, and latency over the last 24 hours.
-3. Discover the selected option from the managed resource group's `onboardingLabWorkloadOption` tag. Review App Service resource health and configuration signals. For `app-service-postgresql`, also review PostgreSQL dependency outcomes and relevant database and network state.
+2. Measure material request volume, availability, failure rate, and latency over the last 24 hours. Separate input-validation errors from server/database failures. A healthy `/healthz` is not proof of saved requests.
+3. Discover the selected option from the App Service `workloadOption` tag or the managed resource group's `onboardingLabWorkloadOption` tag. Review App Service resource health and configuration signals. For `app-service-postgresql`, also review PostgreSQL dependency outcomes and relevant database and network state.
 4. Compare with the prior seven-day baseline only when sufficient history exists. State when the environment is too new for a meaningful baseline.
 5. Use `PlotAreaChartWithCorrelation` to display meaningful 24-hour availability, failure-rate, latency, or dependency time series. Use `PlotBarChart` only for a valid current-versus-baseline or bounded dependency comparison. Label charts with UTC windows, units, and series. Do not plot empty, invented, or misleadingly sparse values; use a short table instead.
 6. Separate confirmed findings from hypotheses and identify missing or contradictory evidence.

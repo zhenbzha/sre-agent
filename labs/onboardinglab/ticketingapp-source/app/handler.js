@@ -3,9 +3,17 @@
 const { readFileSync } = require('node:fs');
 const { join } = require('node:path');
 const { performance } = require('node:perf_hooks');
+const { withDatabase } = require('./database');
 
-const DB_TIMEOUT_MS = 5000;
 const MAX_DB_ATTEMPTS = 4;
+const MAX_BODY_BYTES = 2048;
+const INSERT_REQUEST = 'INSERT INTO material_requests (material, quantity, plant) VALUES ($1, $2, $3) RETURNING request_id';
+class InputError extends Error {
+  constructor(status, message) {
+    super(message);
+    this.status = status;
+  }
+}
 const assets = new Map([
   ['/', ['index.html', 'text/html; charset=utf-8']],
   ['/app.js', ['app.js', 'text/javascript; charset=utf-8']],
@@ -14,31 +22,49 @@ const assets = new Map([
   body: readFileSync(join(__dirname, 'public', file)), type,
 }]));
 
-function databaseConfig(env, getAccessToken) {
-  const port = Number(env.POSTGRES_PORT || 5432);
-  if (!env.POSTGRES_HOST || !env.POSTGRES_DATABASE || !env.POSTGRES_USER ||
-      !env.AZURE_CLIENT_ID || typeof getAccessToken !== 'function' ||
-      !Number.isInteger(port) || port < 1 || port > 65535) {
-    throw new Error('Database configuration unavailable');
-  }
-  return {
-    host: env.POSTGRES_HOST,
-    port,
-    database: env.POSTGRES_DATABASE,
-    user: env.POSTGRES_USER,
-    password: async () => {
-      const accessToken = await getAccessToken('https://ossrdbms-aad.database.windows.net/.default');
-      if (!accessToken || typeof accessToken.token !== 'string' || !accessToken.token ||
-          !Number.isFinite(accessToken.expiresOnTimestamp) || accessToken.expiresOnTimestamp <= Date.now()) {
-        throw new Error('Database credential unavailable');
+function readInput(request) {
+  return new Promise((resolve, reject) => {
+    let body = '';
+    let size = 0;
+    const timer = setTimeout(() => finish(408, 'Request body timed out.'), 5000);
+    function finish(status, message, value) {
+      clearTimeout(timer);
+      request.removeListener('data', onData);
+      request.removeListener('end', onEnd);
+      request.removeListener('error', onError);
+      request.removeListener('aborted', onError);
+      if (status) {
+        request.resume();
+        reject(new InputError(status, message));
+      } else {
+        resolve(value);
       }
-      return accessToken.token;
-    },
-    ssl: { rejectUnauthorized: true },
-    connectionTimeoutMillis: DB_TIMEOUT_MS,
-    query_timeout: DB_TIMEOUT_MS,
-    statement_timeout: DB_TIMEOUT_MS,
-  };
+    }
+    function onData(chunk) {
+      size += Buffer.byteLength(chunk);
+      if (size > MAX_BODY_BYTES) return finish(413, 'Request body is too large.');
+      body += chunk;
+    }
+    function onError() { finish(400, 'Request body could not be read.'); }
+    function onEnd() {
+      let value;
+      try { value = JSON.parse(body); } catch { return finish(400, 'Send a valid JSON material request.'); }
+      if (!value || typeof value !== 'object' || Array.isArray(value) ||
+          Object.keys(value).some((key) => !['material', 'quantity', 'plant'].includes(key)) ||
+          typeof value.material !== 'string' || !value.material.trim() || value.material.trim().length > 120 ||
+          typeof value.plant !== 'string' || !value.plant.trim() || value.plant.trim().length > 80 ||
+          /[\u0000-\u001f\u007f]/.test(value.material + value.plant) ||
+          !Number.isInteger(value.quantity) || value.quantity < 1 || value.quantity > 1000000) {
+        return finish(400, 'Provide material (1-120 characters), quantity (1-1000000 whole units) and plant (1-80 characters).');
+      }
+      finish(0, '', { material: value.material.trim(), quantity: value.quantity, plant: value.plant.trim() });
+    }
+    request.setEncoding('utf8');
+    request.on('data', onData);
+    request.on('end', onEnd);
+    request.on('error', onError);
+    request.on('aborted', onError);
+  });
 }
 
 function json(response, status, body) {
@@ -63,30 +89,50 @@ function createHandler({ createClient, getAccessToken, telemetry, env = process.
     response.setHeader('X-Content-Type-Options', 'nosniff');
     response.setHeader('Referrer-Policy', 'no-referrer');
     response.setHeader('Content-Security-Policy',
-      "default-src 'none'; script-src 'self'; style-src 'self'; img-src https://images.unsplash.com; connect-src 'self'; base-uri 'none'; frame-ancestors 'none'; form-action 'none'");
-    request.resume(); // No endpoint reads request bodies or accepts caller-supplied SQL.
+      "default-src 'none'; script-src 'self'; style-src 'self'; img-src 'none'; connect-src 'self'; base-uri 'none'; frame-ancestors 'none'; form-action 'none'");
 
     // Compare raw paths, without URL normalization or filesystem interpolation.
     const path = (request.url || '').split('?')[0];
     const asset = assets.get(path);
     const allowedMethod = path === '/checkout' ? 'POST' : 'GET';
     if (!asset && path !== '/healthz' && path !== '/checkout') {
+      request.resume();
       return json(response, 404, { error: 'Not found' });
     }
     if (request.method !== allowedMethod) {
+      request.resume();
       response.setHeader('Allow', allowedMethod);
       return json(response, 405, { error: 'Method not allowed' });
     }
     if (path === '/healthz') {
+      request.resume();
       return json(response, 200, { status: 'healthy' });
     }
     if (asset) {
+      request.resume();
       response.writeHead(200, { 'Content-Type': asset.type });
       return response.end(asset.body);
     }
 
     const started = performance.now();
+    let fields;
+    try {
+      if (request.headers['content-type']?.split(';')[0].trim().toLowerCase() !== 'application/json') {
+        request.resume();
+        throw new InputError(415, 'Send a material request with Content-Type: application/json.');
+      }
+      fields = await readInput(request);
+    } catch (error) {
+      if (!(error instanceof InputError)) throw error;
+      track('trackRequest', {
+        name: 'POST /checkout', url: 'http://localhost/checkout',
+        duration: performance.now() - started, resultCode: String(error.status), success: false,
+        properties: { simulated: 'true', outcome: 'invalid-input', 'http.method': 'POST' },
+      });
+      return json(response, error.status, { success: false, simulated: true, message: error.message });
+    }
     let success = false;
+    let requestId;
     let outcome = 'busy';
     const workloadOption = env.WORKLOAD_OPTION || 'app-service-postgresql';
     if (workloadOption === 'app-service') {
@@ -94,51 +140,29 @@ function createHandler({ createClient, getAccessToken, telemetry, env = process.
       outcome = success ? 'available' : 'application-fault';
     } else if (workloadOption === 'app-service-postgresql' && activeAttempts < MAX_DB_ATTEMPTS) {
       activeAttempts += 1;
-      let client;
-      let timer;
+      const dependencyStarted = performance.now();
       outcome = 'unavailable';
       try {
-        client = createClient(databaseConfig(env, getAccessToken));
-        const connectionError = new Promise((_, reject) => client.on('error', reject));
-        const deadline = new Promise((_, reject) => {
-          timer = setTimeout(() => {
-            outcome = 'timeout';
-            reject(new Error('Database deadline exceeded'));
-          }, DB_TIMEOUT_MS);
-        });
-        await Promise.race([
-          (async () => {
-            await client.connect();
-            await client.query('SELECT 1');
-          })(),
-          connectionError,
-          deadline,
-        ]);
+        const result = await withDatabase({
+          createClient, getAccessToken, env, onTimeout: () => { outcome = 'timeout'; },
+        }, (client) => client.query(INSERT_REQUEST, [fields.material, fields.quantity, fields.plant]));
+        requestId = result.rows[0]?.request_id;
+        if (typeof requestId !== 'string' || !/^[1-9][0-9]*$/.test(requestId)) {
+          throw new Error('Database did not return a request number');
+        }
         success = true;
-        outcome = 'connected';
+        outcome = 'saved';
       } catch {
         // Never serialize or log pg errors, connection settings, or credentials.
       } finally {
-        clearTimeout(timer);
-        if (client) {
-          try {
-            Promise.resolve(client.end()).catch(() => {});
-          } catch {
-            // Force-close below even if graceful shutdown failed.
-          } finally {
-            // pg has no public force-close method. Its socket is destroyed after
-            // end() so a timed-out handshake/query (or close) cannot linger.
-            client.connection.stream.destroy();
-          }
-        }
         activeAttempts -= 1;
       }
       track('trackDependency', {
         name: 'PostgreSQL connectivity',
         target: 'PostgreSQL',
         dependencyTypeName: 'PostgreSQL',
-        data: 'SELECT 1',
-        duration: performance.now() - started,
+        data: INSERT_REQUEST,
+        duration: performance.now() - dependencyStarted,
         success,
         resultCode: success ? '0' : '1',
         properties: { simulated: 'true', outcome },
@@ -160,15 +184,16 @@ function createHandler({ createClient, getAccessToken, telemetry, env = process.
     if (success) {
       return json(response, status, {
         success: true, simulated: true,
+        ...(requestId ? { requestId } : {}),
         message: workloadOption === 'app-service'
-          ? 'Simulated checkout succeeded; no purchase was made.'
-          : 'Simulated checkout succeeded. Database connectivity verified; no purchase was made.',
+          ? 'Material request simulated; not saved (database-free workload).'
+          : 'Request saved',
       });
     }
     response.setHeader('Retry-After', '3');
     return json(response, status, {
       success: false, simulated: true,
-      message: 'Simulated checkout unavailable. Please try again shortly.',
+      message: 'Material request could not be confirmed. The service may be busy or the database unavailable. Check the outcome before retrying.',
     });
   };
 }

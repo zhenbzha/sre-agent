@@ -629,10 +629,14 @@ else
 fi
 
 CURRENT_STAGE="application health verification"
+if [[ "$WORKLOAD_OPTION" == "app-service-postgresql" ]]; then
+  pwsh -NoProfile -File "$REPO_ROOT/labs/onboardinglab/ticketingapp-source/initialize-database.ps1" \
+    -Subscription "$SUBSCRIPTION" -ResourceGroup "$LAB_RG" -AppName "$CHECKOUT_APP_NAME"
+fi
 status "Warming the application and verifying checkout."
 for attempt in {1..10}; do
   http_code="$(curl -sS -m 90 -o /tmp/onboardinglab-checkout-response.json -w '%{http_code}' \
-    -X POST -H 'Content-Type: application/json' -d '{"sku":"lab","qty":1}' "$CHECKOUT_URL/checkout" || true)"
+    -X POST -H 'Content-Type: application/json' -d '{"material":"Steel plate","quantity":20,"plant":"Lyon"}' "$CHECKOUT_URL/checkout" || true)"
   status "Checkout attempt $attempt returned HTTP $http_code."
   if [[ "$http_code" == "200" ]]; then
     break

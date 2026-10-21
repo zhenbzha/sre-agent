@@ -45,7 +45,11 @@ test('server selects the UAMI and fetches the PostgreSQL scope only on checkout,
       clients.push(this);
     }
     async connect() { assert.equal(await this.config.password(), token); }
-    async query(sql) { assert.equal(sql, 'SELECT 1'); }
+    async query(sql, values) {
+      assert.match(sql, /^INSERT INTO material_requests/);
+      assert.deepEqual(values, ['Steel plate', 20, 'Lyon']);
+      return { rows: [{ request_id: '42' }] };
+    }
     async end() { this.closed = true; }
   }
   const modules = {
@@ -75,7 +79,13 @@ test('server selects the UAMI and fetches the PostgreSQL scope only on checkout,
       writeHead(status) { this.status = status; },
       end(body) { this.body = String(body); },
     };
-    await handler({ method, url, resume() {} }, response);
+    const request = Object.assign(new EventEmitter(), {
+      method, url, headers: { 'content-type': 'application/json' }, resume() {}, setEncoding() {},
+    });
+    const pending = handler(request, response);
+    request.emit('data', JSON.stringify({ material: 'Steel plate', quantity: 20, plant: 'Lyon' }));
+    request.emit('end');
+    await pending;
     return response;
   }
   assert.equal((await invoke('GET', '/healthz')).status, 200);

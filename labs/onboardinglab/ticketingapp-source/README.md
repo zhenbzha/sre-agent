@@ -1,6 +1,9 @@
-# Ticketing app source
+# SCM Material Requests source
 
-This folder is the complete Azure Developer CLI project for the onboarding lab ticketing workload. It contains the Node.js application, Bicep infrastructure, and deployment parameters required by `azd up`.
+This folder is the existing Azure Developer CLI project for the onboarding lab,
+adapted to SCM Material Requests. Resource names, folders, `/checkout` and workflow
+identifiers remain unchanged. It contains the Node.js app, Bicep infrastructure
+and deployment parameters required by `azd up`.
 
 ## Deploy
 
@@ -22,7 +25,7 @@ azd up
 Choose one of two equal workload options before `azd up`:
 
 - `app-service` deploys Linux App Service and shared telemetry.
-- `app-service-postgresql` adds PostgreSQL Flexible Server and private networking. Register `Microsoft.DBforPostgreSQL` before deployment and use a subscription where PostgreSQL 16 with `Standard_B1ms` is available in Sweden Central.
+- `app-service-postgresql` adds PostgreSQL Flexible Server and private networking. Check PostgreSQL 16 / `Standard_B1ms` and SRE Agent availability in the selected subscription and region before deployment.
 
 To select the PostgreSQL option:
 
@@ -31,6 +34,19 @@ az provider register --namespace Microsoft.DBforPostgreSQL --wait
 azd env set LAB_WORKLOAD_OPTION app-service-postgresql
 azd up
 ```
+
+For this fork's dedicated SCM demo, use azd environment `sre-agent-scm`,
+`AZURE_LOCATION=francecentral` and `LAB_WORKLOAD_OPTION=app-service-postgresql`.
+Use that same location when generating the SRE Agent configuration. The existing
+Bicep derives the resource-group name; do not select an unrelated group.
+
+The post-deploy hook runs the idempotent database initializer through the existing
+App Service container, then continues optional agent setup. It requires Azure CLI
+with `az webapp exec` and PowerShell 7 on both platforms. Startup and `/healthz`
+never query PostgreSQL. See [app/README.md](app/README.md) for the JSON payload and
+private initialization/read-back helper. Submit smoke traffic only after the
+initializer reports completion. No public database endpoint or migration service
+is created.
 
 Retrieve the deployed application URL:
 
@@ -43,9 +59,11 @@ azd env get-value SERVICE_CHECKOUT_ENDPOINT_URL
 The tests do not contact Azure:
 
 ```bash
-npm ci --prefix ./app --ignore-scripts --no-audit --no-fund
-npm test --prefix ./app
-npm run check --prefix ./app
+cd app
+pnpm import
+pnpm install --frozen-lockfile --ignore-scripts
+pnpm test
+pnpm run check
 ```
 
 ## Clean up

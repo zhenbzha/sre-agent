@@ -157,7 +157,7 @@ resource checkoutFailureAlert 'Microsoft.Insights/scheduledQueryRules@2023-03-15
   tags: tags
   properties: {
     displayName: '${namePrefix}-checkout-failures'
-    description: 'Checkout requests returned HTTP 5xx responses during the onboarding lab.'
+    description: 'Material request submissions returned HTTP 5xx responses during the onboarding lab.'
     severity: 2
     enabled: true
     evaluationFrequency: 'PT1M'
@@ -171,6 +171,7 @@ resource checkoutFailureAlert 'Microsoft.Insights/scheduledQueryRules@2023-03-15
             | where TimeGenerated > ago(5m)
             | where Name == "POST /checkout"
             | where Success == false or toint(ResultCode) >= 500
+            | where tostring(Properties.outcome) != "invalid-input"
             | summarize FailureCount = count()
           '''
           timeAggregation: 'Total'
@@ -247,7 +248,7 @@ resource checkoutDatabase 'Microsoft.DBforPostgreSQL/flexibleServers/databases@2
 }
 
 // Disposable lab only: ARM can bootstrap an Entra administrator without a SQL
-// migration host. The app exposes only SELECT 1, never user-supplied SQL.
+// migration host. The app accepts validated material fields, never caller-supplied SQL.
 module checkoutDatabaseAdministrator 'database-identity.bicep' = if (usePostgresql) {
   params: {
     serverName: postgresServer.name

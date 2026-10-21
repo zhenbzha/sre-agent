@@ -2,7 +2,14 @@
 
 Learn how Azure SRE Agent brings application telemetry, Azure resource state, source code, and operational knowledge into one investigation workflow so teams can diagnose incidents faster and respond consistently.
 
-In this hands-on lab, you configure least-privilege access and safeguards, install a read-only incident response workflow, and learn how the same pattern supports proactive health checks and other scheduled operations. A sample ticketing app gives you a monitored environment in which to practice the complete setup.
+In this hands-on lab, you configure least-privilege access and safeguards, install a read-only incident response workflow, and learn how the same pattern supports proactive health checks and other scheduled operations. This fork adapts the sample to **SCM Material Requests** while retaining its infrastructure, endpoint, folder and workflow identifiers.
+
+The dedicated SCM deployment uses azd environment `sre-agent-scm`, France Central
+(`AZURE_LOCATION=francecentral`) and `LAB_WORKLOAD_OPTION=app-service-postgresql`.
+Supply France Central to agent generation as well; Sweden Central examples below
+describe the original lab defaults, not this environment. Follow
+[`ticketingapp-source/README.md`](ticketingapp-source/README.md) for the explicit
+private initializer and material-request payload.
 
 ## What you will learn
 
@@ -195,17 +202,20 @@ azd -C .\ticketingapp-source up
 
 | Resource | App Service | App Service + PostgreSQL | Role in the lab |
 | --- | --- | --- | --- |
-| Azure App Service | Yes | Yes | Hosts the Node.js ticket reservation experience and `POST /checkout` API |
+| Azure App Service | Yes | Yes | Hosts SCM Material Requests and the unchanged `POST /checkout` API |
 | Application Insights and Log Analytics | Yes | Yes | Capture request, dependency, and platform telemetry |
 | Managed identities and RBAC | Yes | Yes | Authenticate the application and authorize agent reads |
 | Azure Monitor alert rule | Yes | Yes | Detects the controlled failure used in Scenario 1 |
-| Azure Database for PostgreSQL | No | Yes | Accepts the application's fixed connectivity query |
+| Azure Database for PostgreSQL | No | Yes | Stores synthetic material requests using a parameterized INSERT |
 | Virtual network and NSG | No | Yes | Provides the private database path and controlled fault boundary |
 
-The sample does not store ticket or payment data. With the PostgreSQL option, each
-reservation also opens a PostgreSQL connection, runs `SELECT 1`, and closes the
-connection. The App Service option avoids the PostgreSQL resources and uses a
-controlled application failure for the incident scenario.
+The sample stores only synthetic material requests. With PostgreSQL, each
+submission opens a fresh connection, inserts material, quantity and plant, and
+returns the database-generated request number before closing the connection.
+The azd post-deploy hook explicitly initializes the table and seeds it idempotently
+inside the application container before smoke checks. Startup and `/healthz`
+remain independent of PostgreSQL. The App Service-only option still simulates
+requests without persistence and uses its existing controlled application fault.
 
 **Checkpoint: confirm a healthy baseline**
 
@@ -215,10 +225,10 @@ Retrieve the application URL:
 azd -C ./ticketingapp-source env get-value SERVICE_CHECKOUT_ENDPOINT_URL
 ```
 
-Open the application URL and select **Reserve tickets**.
+Open the application URL, enter material, quantity and plant, then select **Submit request**.
 
 > [!TIP]
-> Continue only when the reservation succeeds and the **Confirmed** count increases. A failed baseline request is a deployment problem, not the lab incident.
+> Continue only when **Request saved** displays a database-generated number and the **Successful** count increases. A failed baseline request is a deployment problem, not the lab incident.
 
 ### Local agent deployment
 
@@ -492,7 +502,7 @@ available versioned resource group and leaves the existing environment unchanged
 
 **Checkpoint: confirm a healthy baseline**
 
-Open the checkout URL reported by the deployment and select **Reserve tickets**.
+Open the application URL reported by the deployment and select **Submit request**.
 Continue only when the request succeeds and the **Confirmed** count increases. A
 failed baseline request is a deployment problem, not the lab incident.
 
@@ -662,7 +672,7 @@ private network path apply only to the App Service + PostgreSQL option.
 
 | You operate | SRE Agent operates |
 | --- | --- |
-| Generate reservation demand | Detect and investigate the incident |
+| Generate material request demand | Detect and investigate the incident |
 | Inject and reset the controlled fault for the selected option | Run application, Azure, source-code, and available dependency checks |
 | Decide and execute recovery | Correlate evidence and recommend the reset |
 | Verify service recovery | Propose optional GitHub and Outlook follow-ups for review |
@@ -688,7 +698,7 @@ The agent identities use Azure RBAC for resource and telemetry access. The agent
    ```
 
 2. In the ticketing application, select **Launch on-sale simulation**.
-3. Confirm that reservations fail while the service health check remains available.
+3. Confirm that material request submissions fail while the service health check remains available.
 
 **Observe the incident workflow**
 
@@ -719,14 +729,14 @@ The `alert-investigation` response plan routes the alert to the `alert-investiga
    ./scripts/fault.ps1 reset -Subscription $Subscription -ResourceGroup 'YOUR-LAB-RESOURCE-GROUP'
    ```
 
-2. Return to the application and confirm that new reservations succeed.
+2. Return to the application and confirm that new material requests are saved.
 
 **Expected result**
 
 - The incident thread identifies the controlled App Service fault or blocked app-to-database path for the selected option
 - The thread contains timestamped app telemetry, Azure state, and source evidence
 - Optional GitHub and Outlook writes remain subject to approval
-- After your reset, ticket reservations succeed again
+- After your reset, material requests are saved again
 
 ## Scenario 2: Scheduled health check and Live Report
 
@@ -763,7 +773,7 @@ the `reservation-daily-health-report` scheduled task.
 3. Select **Run task now**. Leave the recurring schedule active.
 4. Review the result in the task thread.
 
-The task uses `proactive-health-check` to review ticket reservation availability, failures, latency, and Azure resource health over the last 24 hours. The App Service + PostgreSQL option also includes dependency health. It compares with prior data only when enough history exists and reports missing history explicitly. It then proposes the same summary to the configured Outlook recipient for Review-mode approval.
+The task uses `proactive-health-check` to review material request availability, failures, latency, and Azure resource health over the last 24 hours. The App Service + PostgreSQL option also includes dependency health. It compares with prior data only when enough history exists and reports missing history explicitly. The existing `reservation-daily-health-report` identifier is preserved. Any optional email still requires Review-mode approval.
 
 **Create the Live Report**
 
@@ -772,8 +782,8 @@ The task uses `proactive-health-check` to review ticket reservation availability
 3. Enter this request:
 
    ```text
-   Build a Live Report called "Ticket Reservation Health" from the connected
-   Application Insights data. Cover the last 24 hours and show reservation request
+   Build a Live Report called "Material Request Health" from the connected
+   Application Insights data. Cover the last 24 hours and show material request
    volume, availability, failure rate, and latency. If this environment uses the
    App Service + PostgreSQL option, include PostgreSQL dependency health; otherwise
    state that database dependency analysis is not applicable. Include clear status
@@ -789,7 +799,7 @@ The scheduled task and Live Report are separate operations. The task records evi
 
 - The task thread contains timestamped findings, evidence, risks, and recommended follow-up
 - The recurring task remains active and can also be run on demand
-- `Ticket Reservation Health` appears in **Live Reports** with refreshable read-only charts and status indicators
+- `Material Request Health` appears in **Live Reports** with refreshable read-only charts and status indicators
 - Neither operation modifies Azure resources or creates issues; the task sends email only after Review-mode approval
 
 ## Scenario 3: Pull-request validation
@@ -903,8 +913,8 @@ The validator treats the event, patches, and repository content as untrusted. Th
 | `azd` login has expired | Run `azd auth logout`, then `azd auth login` and retry. |
 | Workload choice is preselected or you want a completely fresh run | `-Reset` clears saved choices only. For a blank environment, delete the lab resource group, wait for deletion, remove `$HOME/.onboardinglab-agent-bootstrap.json`, then rerun the current bootstrap with `-Reset`. |
 | PostgreSQL 16 or `Standard_B1ms` is unavailable in Sweden Central | Start a new environment with the App Service option, or use a subscription with the required PostgreSQL capability. Setup never silently changes the selected option. |
-| App reservation fails before fault injection | Stop and fix the baseline deployment first. |
-| Fault injection says an alert is still firing | Reset the fault, generate successful reservations, and wait for the alert to resolve. |
+| Material submission fails before fault injection | Stop and fix the baseline deployment first. |
+| Fault injection says an alert is still firing | Reset the fault, generate successful material requests, and wait for the alert to resolve. |
 | Alert fires but no incident appears | Check that its state is **New** and condition is **Fired**, then allow for the next agent scan. |
 | GitHub issue or email is missing | Verify the connection supports the required write and inspect the incident thread for its receipt or error. Do not blindly retry an unknown write outcome. |
 

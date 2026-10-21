@@ -1,19 +1,19 @@
-# Simulated checkout app
+# SCM Material Requests app
 
 Tiny plain-JavaScript Node.js >=22 app for source deployment to **Linux App
-Service**. There is no Docker image, bundler, React build, order schema, or real
-purchase. The hosting integration is owned by the parent lab.
+Service**. It stores synthetic material requests in one PostgreSQL table. There is
+no new framework, order-processing engine or external business integration.
 
 ## Start and validate
 
 From this folder:
 
 ```sh
-npm ci --ignore-scripts
-npm test
-npm run check
-npm audit
-npm start
+pnpm import
+pnpm install --frozen-lockfile --ignore-scripts
+pnpm test
+pnpm run check
+pnpm start
 ```
 
 The HTTP server binds to `0.0.0.0` on `PORT`, default `8080`. Startup and health
@@ -45,10 +45,11 @@ inject credentials and database clients and make no real managed-identity calls.
 Microsoft Entra administrator to avoid separate database-user bootstrapping. This
 is elevated database access, **not a production privilege model**. Production apps
 should use a separately provisioned, least-privilege database principal, not an
-Entra administrator. This app only executes `SELECT 1`.
+Entra administrator. Runtime submissions execute one parameterized INSERT; the
+operator initializer performs the fixed schema/seed operations described below.
 
 TLS certificate validation is mandatory. Each checkout constructs a fresh `pg`
-Client, connects and runs only `SELECT 1`, then closes/destroys the connection in
+Client, connects and inserts the validated material, quantity and plant, then closes/destroys the connection in
 `finally`. One five-second `Promise.race` deadline covers token acquisition,
 connection and query together. An outstanding SDK token request may finish after
 the deadline, but does not delay the 503 or socket cleanup; late rejections are handled.
@@ -63,10 +64,43 @@ No connection pool can hide a deny rule behind an existing DB connection.
 | GET | `/` | Self-contained UI |
 | GET | `/app.js`, `/styles.css` | Only explicitly allowlisted static assets |
 | GET | `/healthz` | 200 JSON independent of database health |
-| POST | `/checkout` | 200 simulated success or sanitized 503 JSON |
+| POST | `/checkout` | 200 with `success`, `simulated`, `message` and database-generated string `requestId`; sanitized 503 on failure |
 
 Known paths with other methods return 405 with `Allow`; unknown paths return
-404. Bodies are ignored. There are no database mutation or fault-control routes.
+404. Submit JSON with `Content-Type: application/json`:
+
+```json
+{"material":"Steel plate","quantity":20,"plant":"Lyon"}
+```
+
+Material and plant are trimmed nonempty strings (maximum 120 and 80 characters);
+control characters and extra fields are rejected. Quantity must be an integer
+from 1 to 1,000,000. The body is limited to 2 KiB and five seconds. Invalid bodies
+produce explicit 400/408/413/415 responses without a database connection.
+The database-free `app-service` option retains simulated success but explicitly
+says it did not save anything and does not invent a request number.
+
+## Private initialization and row verification
+
+`node initialize.js` creates `material_requests` with a generated identity key,
+material, quantity, plant and timestamp. It seeds three fixed synthetic records
+in one transaction, serializing concurrent initializers with a transaction lock.
+Rerunning it leaves existing requests untouched and inserts zero duplicate seeds.
+`node initialize.js --request 42` reads request 42 directly from PostgreSQL.
+Neither operation is an HTTP route or part of server startup.
+
+The parent azd post-deploy hook runs `initialize-database.ps1` inside one running
+App Service application container via authenticated `az webapp exec`. The helper waits for the specific Kudu deployment to complete and for `/healthz`
+to report readiness before selecting an instance. It then
+checks the unique completion file and exit code through Entra-authenticated SCM,
+not merely the command's acceptance. It uses the existing app identity, TLS and
+private connectivity; database public access remains disabled. Azure CLI must
+support `az webapp exec`. Do not use the Kudu container to connect to PostgreSQL.
+The same helper's `-RequestId` option verifies a saved row without initializing.
+Do not submit smoke-check traffic until initialization reports success.
+
+An interrupted or timed-out INSERT can have an uncertain commit outcome. Failure
+messages do not promise that no row was written; verify before retrying.
 
 SDK telemetry is manual-only, unsampled (`samplingPercentage: 100`): one request
 named `POST /checkout`, plus a PostgreSQL dependency for each admitted attempt.
@@ -89,4 +123,4 @@ Supply this folder as the source app to the parent azd integration. Runtime star
 command is `npm start`; production dependencies must be installed on Linux during
 remote build. Exclude local `node_modules` from any source archive. No `.deployment`
 file is included: SCM/azd remote-build configuration has not been verified here
-and remains the parent integration's responsibility. No Azure deployment was run.
+and remains the parent integration's responsibility. Deployment and live evidence must be verified separately from these offline tests.

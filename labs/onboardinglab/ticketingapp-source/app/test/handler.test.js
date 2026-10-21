@@ -3,6 +3,9 @@
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const { EventEmitter } = require('node:events');
+const { performance } = require('node:perf_hooks');
+const { readFileSync } = require('node:fs');
+const { join } = require('node:path');
 const { createHandler } = require('../handler');
 
 const env = {
@@ -12,6 +15,7 @@ const env = {
 };
 const token = 'test-token-never-expose';
 const secretError = new Error(`connect ECONNREFUSED postgresql://${env.POSTGRES_USER}:${token}@${env.POSTGRES_HOST}/lab`);
+const materialRequest = { material: 'Steel plate', quantity: 20, plant: 'Lyon' };
 
 function fixture(options = {}) {
   const clients = [];
@@ -34,7 +38,7 @@ function fixture(options = {}) {
       Object.assign(client, {
         config, closed: 0, destroyed: 0, queries: [],
         connect: async () => { assert.equal(await config.password(), token); },
-        query: async (sql) => { client.queries.push(sql); return { rows: [{ '?column?': 1 }] }; },
+        query: async (sql, values) => { client.queries.push({ sql, values }); return { rows: [{ request_id: '42' }] }; },
         end: async () => { client.closed += 1; },
         connection: { stream: { destroy: () => { client.destroyed += 1; } } },
       }, options.client);
@@ -46,29 +50,40 @@ function fixture(options = {}) {
   return { handler, clients, scopes, requests, dependencies, telemetry };
 }
 
-async function invoke(handler, method = 'POST', url = '/checkout') {
+async function invoke(handler, method = 'POST', url = '/checkout', body = JSON.stringify(materialRequest), contentType = 'application/json') {
   const response = {
     headers: {},
     setHeader(name, value) { this.headers[name] = value; },
     writeHead(status, headers) { this.status = status; Object.assign(this.headers, headers); },
     end(body) { this.body = String(body); },
   };
-  await handler({ method, url, resume() {} }, response);
+  const request = Object.assign(new EventEmitter(), {
+    method, url, headers: { 'content-type': contentType }, resume() {}, setEncoding() {},
+  });
+  const pending = handler(request, response);
+  request.emit('data', body);
+  request.emit('end');
+  await pending;
   return response;
 }
 
-test('checkout succeeds with a fresh verified-TLS client, SELECT 1, cleanup and exact telemetry', async () => {
+test('checkout inserts submitted fields with fresh verified-TLS clients and returns the generated number', async () => {
   const f = fixture();
   for (let i = 0; i < 2; i += 1) {
     const response = await invoke(f.handler);
     assert.equal(response.status, 200);
     assert.equal(JSON.parse(response.body).simulated, true);
     assert.equal(JSON.parse(response.body).success, true);
+    assert.equal(JSON.parse(response.body).requestId, '42');
+    assert.equal(JSON.parse(response.body).message, 'Request saved');
   }
   assert.equal(f.clients.length, 2);
   assert.notEqual(f.clients[0], f.clients[1]);
   for (const client of f.clients) {
-    assert.deepEqual(client.queries, ['SELECT 1']);
+    assert.deepEqual(client.queries, [{
+      sql: 'INSERT INTO material_requests (material, quantity, plant) VALUES ($1, $2, $3) RETURNING request_id',
+      values: ['Steel plate', 20, 'Lyon'],
+    }]);
     assert.equal(client.closed, 1);
     assert.equal(client.destroyed, 1);
     assert.deepEqual(client.config.ssl, { rejectUnauthorized: true });
@@ -90,6 +105,97 @@ test('checkout succeeds with a fresh verified-TLS client, SELECT 1, cleanup and 
   assert.equal(f.dependencies[0].dependencyTypeName, 'PostgreSQL');
   assert.equal(f.dependencies[0].success, true);
   assert.ok(f.dependencies[0].duration >= 0);
+});
+
+test('input is trimmed and SQL-like text stays in bound values, never SQL or telemetry', async () => {
+  const f = fixture();
+  const material = "Plate'); DROP TABLE material_requests; --";
+  const response = await invoke(f.handler, 'POST', '/checkout',
+    JSON.stringify({ material: ` ${material} `, quantity: 3, plant: ' Lille ' }));
+  assert.equal(response.status, 200);
+  assert.deepEqual(f.clients[0].queries[0].values, [material, 3, 'Lille']);
+  assert.equal(f.clients[0].queries[0].sql.includes(material), false);
+  assert.equal(JSON.stringify([f.requests, f.dependencies]).includes(material), false);
+});
+
+for (const input of [
+  null, [], {}, { ...materialRequest, material: '' }, { ...materialRequest, material: ' ' },
+  { ...materialRequest, material: 'a'.repeat(121) }, { ...materialRequest, plant: 'a'.repeat(81) },
+  { ...materialRequest, plant: '\u0000' }, { ...materialRequest, quantity: '2' },
+  { ...materialRequest, quantity: 0 }, { ...materialRequest, quantity: -1 },
+  { ...materialRequest, quantity: 1.5 }, { ...materialRequest, quantity: 1000001 },
+  { ...materialRequest, query: 'SELECT 1' },
+]) {
+  test(`invalid material input is rejected before opening a connection: ${JSON.stringify(input)}`, async () => {
+    const f = fixture();
+    const response = await invoke(f.handler, 'POST', '/checkout', JSON.stringify(input));
+    assert.equal(response.status, 400);
+    assert.equal(JSON.parse(response.body).success, false);
+    assert.equal(f.clients.length, 0);
+    assert.equal(f.requests[0].properties.outcome, 'invalid-input');
+  });
+}
+
+test('malformed, oversized and non-JSON bodies fail clearly without database calls', async () => {
+  const f = fixture();
+  assert.equal((await invoke(f.handler, 'POST', '/checkout', '{')).status, 400);
+  assert.equal((await invoke(f.handler, 'POST', '/checkout', 'x'.repeat(2049))).status, 413);
+  assert.equal((await invoke(f.handler, 'POST', '/checkout', '{}', 'text/plain')).status, 415);
+  assert.equal(f.clients.length, 0);
+});
+
+test('missing database-generated number is not reported as saved', async () => {
+  const f = fixture({ client: { query: async () => ({ rows: [] }) } });
+  assert.equal((await invoke(f.handler)).status, 503);
+});
+
+test('slow request bodies time out independently of health and database access', async (t) => {
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  const f = fixture();
+  const request = Object.assign(new EventEmitter(), {
+    method: 'POST', url: '/checkout', headers: { 'content-type': 'application/json' },
+    resume() {}, setEncoding() {},
+  });
+  const response = { setHeader() {}, writeHead(status) { this.status = status; }, end() {} };
+  const pending = f.handler(request, response);
+  assert.equal((await invoke(f.handler, 'GET', '/healthz')).status, 200);
+  t.mock.timers.tick(5000);
+  await pending;
+  assert.equal(response.status, 408);
+  assert.equal(f.clients.length, 0);
+  assert.equal(request.listenerCount('data'), 0);
+});
+
+test('body upload time belongs to request duration, not PostgreSQL dependency duration', async (t) => {
+  let clock = 0;
+  t.mock.method(performance, 'now', () => clock);
+  const f = fixture();
+  const request = Object.assign(new EventEmitter(), {
+    method: 'POST', url: '/checkout', headers: { 'content-type': 'application/json' },
+    resume() {}, setEncoding() {},
+  });
+  const response = { setHeader() {}, writeHead(status) { this.status = status; }, end() {} };
+  const pending = f.handler(request, response);
+  clock = 250;
+  request.emit('data', JSON.stringify(materialRequest));
+  request.emit('end');
+  await pending;
+  assert.equal(response.status, 200);
+  assert.equal(f.requests[0].duration, 250);
+  assert.equal(f.dependencies[0].duration, 0);
+});
+
+test('outage alert retains endpoint and server-failure matching but excludes validation outcomes', async () => {
+  const infrastructure = readFileSync(join(__dirname, '../../modules/workload.bicep'), 'utf8');
+  assert.match(infrastructure, /where Name == "POST \/checkout"/);
+  assert.match(infrastructure, /where Success == false or toint\(ResultCode\) >= 500\s+\| where tostring\(Properties\.outcome\) != "invalid-input"/);
+  const f = fixture({ client: { connect: async () => { throw secretError; } } });
+  await invoke(f.handler, 'POST', '/checkout', '{}');
+  await invoke(f.handler);
+  assert.equal(f.requests[0].resultCode, '400');
+  assert.equal(f.requests[0].properties.outcome, 'invalid-input');
+  assert.equal(f.requests[1].resultCode, '503');
+  assert.notEqual(f.requests[1].properties.outcome, 'invalid-input');
 });
 
 for (const phase of ['connect', 'query']) {
@@ -174,6 +280,7 @@ test('token acquisition is lazy and a hung credential shares the five-second dea
   assert.equal(tokenCalls, 0);
   let completed = false;
   const pending = invoke(f.handler).then((response) => { completed = true; return response; });
+  await Promise.resolve();
   assert.equal(tokenCalls, 1);
   t.mock.timers.tick(4999);
   await Promise.resolve();
@@ -201,6 +308,7 @@ test('token acquisition and query share a single total five-second budget', asyn
     client: { query: () => { queryStarted(); return new Promise(() => {}); } },
   });
   const pending = invoke(f.handler);
+  await Promise.resolve();
   t.mock.timers.tick(4000);
   resolveToken({ token, expiresOnTimestamp: Date.now() + 60000 });
   await querying;
@@ -238,6 +346,7 @@ test('connection and query share one total 5-second budget', async (t) => {
     query: () => new Promise(() => {}),
   } });
   const pending = invoke(f.handler);
+  await Promise.resolve();
   t.mock.timers.tick(4000);
   connected();
   await Promise.resolve();
@@ -258,6 +367,7 @@ test('four-attempt limit rejects excess traffic; health works and slots recover'
   release.forEach((resolve) => resolve());
   assert.ok((await Promise.all(pending)).every((response) => response.status === 200));
   const next = invoke(f.handler);
+  await Promise.resolve();
   release[4]();
   assert.equal((await next).status, 200);
 });
@@ -265,6 +375,7 @@ test('four-attempt limit rejects excess traffic; health works and slots recover'
 test('idle socket errors are sanitized and cleanup errors cannot expose credentials', async () => {
   const f = fixture({ client: { connect: () => new Promise(() => {}) } });
   const pending = invoke(f.handler);
+  await Promise.resolve();
   f.clients[0].emit('error', secretError);
   const response = await pending;
   assert.equal(response.status, 503);
@@ -287,7 +398,7 @@ test('only allowlisted paths and methods are served, including traversal rejecti
     const get = await invoke(f.handler, 'GET', path);
     assert.equal(get.status, 200);
     assert.equal(get.headers['X-Content-Type-Options'], 'nosniff');
-    assert.match(get.headers['Content-Security-Policy'], /img-src https:\/\/images\.unsplash\.com/);
+    assert.match(get.headers['Content-Security-Policy'], /img-src 'none'/);
     const post = await invoke(f.handler, 'POST', path);
     assert.equal(post.status, 405);
     assert.equal(post.headers.Allow, 'GET');
@@ -309,6 +420,8 @@ test('App Service option succeeds without PostgreSQL and emits request-only tele
   const response = await invoke(f.handler);
   assert.equal(response.status, 200);
   assert.equal(JSON.parse(response.body).success, true);
+  assert.equal(JSON.parse(response.body).requestId, undefined);
+  assert.match(JSON.parse(response.body).message, /not saved/);
   assert.equal(f.clients.length, 0);
   assert.equal(f.dependencies.length, 0);
   assert.equal(f.requests[0].properties.outcome, 'available');

@@ -36,7 +36,7 @@ nav { display: flex; align-items: center; justify-content: space-between; margin
 	gap: 40px;
 	padding: 52px;
 	color: #fff;
-	background-image: linear-gradient(90deg, rgba(14, 12, 20, .91) 0%, rgba(14, 12, 20, .62) 43%, rgba(14, 12, 20, .15) 78%), linear-gradient(0deg, rgba(14, 12, 20, .7), transparent 60%), url("https://images.unsplash.com/photo-1501386761578-eac5c94b800a?auto=format&fit=crop&w=1800&q=85");
+	background-image: linear-gradient(120deg, #172b30, #355c58);
 	background-position: center;
 	background-size: cover;
 }
@@ -65,6 +65,9 @@ h2 { margin: 7px 0 0; font-family: Georgia, serif; font-size: 1.75rem; font-weig
 .detail small, .detail strong { display: block; }
 .detail small, .service-status small, .counters small { color: #77717b; font-size: .72rem; }
 .detail strong { margin-top: 3px; font-size: .92rem; font-weight: 700; }
+.detail label { flex: 1; min-width: 0; }
+.detail input { width: 100%; margin-top: 5px; padding: 9px; border: 1px solid #c9c2b8; border-radius: 3px; font: inherit; }
+.detail input:focus-visible { outline: 3px solid #eda75a; outline-offset: 2px; }
 
 .service-status { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; grid-column: 2; grid-row: 1 / span 2; align-self: end; }
 .service-status > div { min-height: 98px; padding: 14px; border-radius: 4px; background: #f5f3ef; }
@@ -106,7 +109,7 @@ footer span:first-child { color: #3a353d; font-weight: 800; }
 	main { padding: 14px; }
 	nav { margin-bottom: 14px; }
 	.location { display: none; }
-	.event-hero { position: relative; display: block; min-height: 520px; padding: 32px 24px 24px; background-image: linear-gradient(0deg, rgba(14, 12, 20, .92) 0%, rgba(14, 12, 20, .18) 72%), url("https://images.unsplash.com/photo-1501386761578-eac5c94b800a?auto=format&fit=crop&w=900&q=82"); }
+	.event-hero { position: relative; display: block; min-height: 520px; padding: 32px 24px 24px; }
 	h1 { margin-top: 12px; font-size: 2.8rem; }
 	.hero-copy p { font-size: .9rem; }
 	.event-meta { position: absolute; right: 24px; bottom: 24px; left: 24px; grid-template-columns: 1fr 1fr; min-width: 0; }

@@ -2,20 +2,20 @@
 
 ## Workload
 
-The onboarding lab deploys a Node.js ticketing application to Azure App Service. The selected workload option is recorded in the managed resource group's `onboardingLabWorkloadOption` tag.
+The onboarding lab deploys the Node.js SCM Material Requests application to Azure App Service. Discover the selected workload option from the App Service `workloadOption` tag (or the managed resource group's `onboardingLabWorkloadOption` tag for agent-driven deployments).
 
-- `app-service` handles each simulated reservation in App Service without a database. The controlled fault is the `APP_FAULT_ENABLED` app setting.
-- `app-service-postgresql` opens a fresh TLS-verified connection to Azure Database for PostgreSQL Flexible Server, executes only `SELECT 1`, and closes the connection. It uses a user-assigned managed identity for PostgreSQL Microsoft Entra authentication. App Service uses an application subnet; PostgreSQL uses a delegated database subnet and private DNS. An application-subnet network security group controls outbound TCP 5432 traffic to the database subnet.
+- `app-service` handles each simulated material request in App Service without persisting it. The controlled fault is the `APP_FAULT_ENABLED` app setting.
+- `app-service-postgresql` validates material, whole-unit quantity and plant, opens a fresh TLS-verified connection to Azure Database for PostgreSQL Flexible Server, and performs a parameterized INSERT into `material_requests`. PostgreSQL generates the request number and creation timestamp; a successful response contains that number as the string `requestId`. The connection closes after every attempt. It uses a user-assigned managed identity for PostgreSQL Microsoft Entra authentication. App Service uses an application subnet; PostgreSQL uses a delegated database subnet and private DNS. An application-subnet network security group controls outbound TCP 5432 traffic to the database subnet.
 
-Neither option stores ticket, customer, or payment data.
+Only synthetic material requests are stored; there are no customer, payment, SAP or production-order integrations. An explicit operator initializer creates the single table and seeds it idempotently through the application container's private connectivity. Initialization never runs in application startup or `/healthz`. Token acquisition, connection and SQL share a five-second deadline, with at most four concurrent submission connections and no pool. A timed-out submission has an uncertain write outcome; do not assume it is safe to retry blindly.
 
 ## Observability
 
-The ticketing application emits one manually tracked Application Insights request named `POST /checkout` for each admitted reservation attempt. Request telemetry records success, HTTP status, duration, the selected workload option, and a bounded outcome. The PostgreSQL option also emits one dependency per attempt. Dependency telemetry records success and duration. Telemetry must not contain request bodies, host headers, query parameters, access tokens, connection strings, or exception details.
+The application retains `POST /checkout` and its manually tracked Application Insights request name for alert compatibility. Request telemetry records success, HTTP status, duration and a bounded outcome. Invalid input produces HTTP 400, 408, 413 or 415 without contacting PostgreSQL. The PostgreSQL option emits one dependency per admitted database attempt, with parameter placeholders rather than submitted values. Dependency telemetry records success and duration. Telemetry must not contain request bodies, host headers, query parameters, access tokens, connection strings, or exception details.
 
-The `GET /healthz` endpoint is independent of checkout processing. It can remain healthy while reservations fail, so health-check success is not evidence that checkout works.
+The `GET /healthz` endpoint is independent of request persistence. It can remain healthy while material submissions fail, so health-check success is not evidence that requests are saved.
 
-Agent operational telemetry is stored in a separate Application Insights resource and Log Analytics workspace. Do not use agent telemetry to measure ticket reservation impact.
+Agent operational telemetry is stored in a separate Application Insights resource and Log Analytics workspace. Do not use agent telemetry to measure material-request impact.
 
 ## Resource discovery
 

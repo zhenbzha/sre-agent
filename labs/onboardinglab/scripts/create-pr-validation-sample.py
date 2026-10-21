@@ -90,6 +90,7 @@ def replace_once(path, old, new):
 
 def apply_scenario(repo, workload_option, scenario):
     handler = repo / "app" / "handler.js"
+    database = repo / "app" / "database.js"
     tests = repo / "app" / "test" / "handler.test.js"
     if workload_option == "app-service" and scenario == "pass":
         replace_once(
@@ -114,7 +115,7 @@ def apply_scenario(repo, workload_option, scenario):
             "if (env.APP_FAULT_ENABLED === 'true') await new Promise(() => {});\n      success = true;",
         )
     elif scenario == "pass":
-        replace_once(handler, "const DB_TIMEOUT_MS = 5000;", "const DB_TIMEOUT_MS = 4500;")
+        replace_once(database, "const DB_TIMEOUT_MS = 5000;", "const DB_TIMEOUT_MS = 4500;")
         replacements = {
             "five-second deadline": "4.5-second deadline",
             "five-second budget": "4.5-second budget",
@@ -134,9 +135,9 @@ def apply_scenario(repo, workload_option, scenario):
         tests.write_text(content, encoding="utf-8")
     else:
         replace_once(
-            handler,
-            "            Promise.resolve(client.end()).catch(() => {});",
-            "            await client.end();",
+            database,
+            "        Promise.resolve(client.end()).catch(() => {});",
+            "        await client.end();",
         )
 
 
@@ -182,6 +183,7 @@ def main():
         run(
             "git", "add",
             "labs/onboardinglab/ticketingapp-source/app/handler.js",
+            "labs/onboardinglab/ticketingapp-source/app/database.js",
             "labs/onboardinglab/ticketingapp-source/app/test/handler.test.js",
             cwd=repo,
         )

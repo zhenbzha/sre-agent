@@ -139,7 +139,7 @@ def render(template_path):
             fail("trigger must use the azure-monitor incident platform")
         handoff_description = "Investigates Azure Monitor incidents using telemetry, Azure state, and source evidence."
     elif trigger_type == "scheduled-task":
-        handoff_description = "Runs scheduled ticket reservation health checks and prepares review-gated reports."
+        handoff_description = "Runs scheduled SCM material request health checks and prepares review-gated reports."
     else:
         fail("trigger.type must be incident-platform or scheduled-task")
 
