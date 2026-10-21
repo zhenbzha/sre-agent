@@ -866,7 +866,13 @@ python3 ./scripts/configure-pr-validation-repository.py \
    --agent-name "$agent_name"
 ```
 
-Run the command from the `onboardinglab` directory with a clean `sre-agent` worktree and authenticated `az` and `gh` sessions. The configurator never prints the callback URL. The installed `pull_request_target` workflow remains read-only: it uses `contents: read` and `pull-requests: read`, fetches only GitHub API metadata and bounded patches, and never checks out or executes pull-request code.
+Run the command from the `onboardinglab` directory with a clean `sre-agent` worktree and authenticated `az` and `gh` sessions. The configurator never prints the callback URL. The installed `pull_request_target` workflow remains read-only: it uses `contents: read` and `pull-requests: read`, fetches only GitHub API metadata, patches and bounded source snapshots, and never checks out or executes pull-request code.
+
+Publish `scripts/internal/build-pr-validation-payload.py` together with the
+workflow on the fork's default branch. The workflow downloads that trusted helper
+at `github.workflow_sha`, never from the PR branch. The helper uses only Python's
+standard library and the runner's existing GitHub CLI; no dependency install is
+needed. The configurator verifies that both files are present.
 
 Treat the callback as a secret because anyone holding it can start a validation thread. The Logic App still uses managed identity for the authenticated hop to SRE Agent.
 
@@ -908,12 +914,47 @@ Leave both pull requests open and unmerged. Opening each PR starts **SRE Agent P
 
 For each PR, confirm the GitHub Actions run succeeds, then open the new SRE Agent thread and review its verified payload, findings, evidence gaps, and recommendation. The good PR should receive `PASS`. The regression PR should receive `BLOCK` with concrete remediation appropriate to the selected option.
 
-The validator treats the event, patches, and repository content as untrusted. The trusted default-branch workflow sends GitHub's repository, pull-request number, refs, URL, head SHA, and bounded changed-file patches through the secret callback. The validator checks the repository and base branch against its connected source before review. It may inspect read-only telemetry or Azure state when useful, but it must not deploy the branch, generate synthetic traffic, change Azure or GitHub, merge the pull request, send email, or claim that it posted a pull-request comment.
+The validator treats the event, patches, and repository content as untrusted.
+The trusted default-branch workflow sends schema version 2: GitHub's PR identity,
+base/head/merge-base SHAs, comparison patches and complete text snapshots pinned
+to the merge base and head. The head snapshot includes the changed files plus
+the database helper, handler, server, package manifest, app README, browser code
+and handler tests. Before sending, the collector verifies blob hashes and checks
+that the PR has not moved since the event or during collection.
+
+Collection fails explicitly for more than 100 changed files, missing patches,
+truncated trees, unavailable/non-text/non-regular files, files over 64 KiB, or a
+payload over 256 KiB. It never silently truncates evidence or falls back to a
+cached checkout. Split an oversized PR or correct the named collection failure
+before retrying. The workflow does not run the PR's tests.
+
+The validator checks the repository and base branch against its connected
+configuration, but reviews source from the supplied snapshots, not Code Access's
+cached files. Additional required source that was not supplied must be reported
+as missing evidence. It may inspect read-only telemetry or Azure state when
+useful, but it must not deploy the branch, generate synthetic traffic, change
+Azure or GitHub, merge the pull request, send email, or claim that it posted a
+pull-request comment.
+
+The PR review must also leave files, memories and Live Reports unchanged. It
+returns reusable observations in the review thread instead of requesting a
+write approval before reporting its recommendation.
+
+Code Access synchronization is asynchronous, but Scenario 3 no longer waits for
+it or requires reconnecting after pushes. Each review uses its own immutable
+source evidence. For other scenarios that read deployed source through Code
+Access, still verify `Ready`, the deployed commit and actual relevant contents;
+a successful registration or connectivity test alone is not a freshness check.
+
+When updating an existing installation, install the updated validator template
+and publish the workflow and collector before reopening the sample PRs. Old
+schema-version-1 deliveries are rejected rather than reviewed against stale
+source. Neither sample PR needs to be merged or deployed.
 
 **Expected result**
 
-- GitHub Actions delivers only the expected pull-request metadata through the managed-identity bridge
-- The agent thread ties its review to the verified repository, pull request, refs, and head SHA
+- GitHub Actions delivers verified PR metadata and bounded immutable source evidence through the existing managed-identity bridge
+- The agent thread ties its review to the verified repository, pull request, head SHA and merge-base SHA without relying on cached `main`
 - The good PR receives `PASS`; the realistic cleanup regression receives `BLOCK` with concrete remediation
 - Both PRs remain open and unmerged, and neither branch is deployed
 - The result stays in the SRE Agent thread; no automatic GitHub comment occurs

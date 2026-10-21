@@ -9,6 +9,7 @@ from pathlib import Path
 
 
 WORKFLOW_PATH = Path(".github/workflows/sre-agent-pr-validation.yml")
+COLLECTOR_PATH = Path("labs/onboardinglab/scripts/internal/build-pr-validation-payload.py")
 SECRET_NAME = "SRE_AGENT_WEBHOOK_URL"
 
 
@@ -57,6 +58,8 @@ def main():
     )
     if not source.is_file():
         raise SystemExit(f"Trusted workflow template not found: {source}")
+    if not (repo / COLLECTOR_PATH).is_file():
+        raise SystemExit(f"Trusted evidence collector not found: {repo / COLLECTOR_PATH}")
 
     run("az", "account", "show", "--subscription", args.subscription, cwd=repo, capture=True)
     run("gh", "auth", "status", cwd=repo, capture=True)
@@ -97,6 +100,7 @@ def main():
 
     run("git", "switch", default_branch, cwd=repo)
     run("git", "pull", "--ff-only", "origin", default_branch, cwd=repo)
+    run("git", "ls-files", "--error-unmatch", str(COLLECTOR_PATH), cwd=repo, capture=True)
     destination = repo / WORKFLOW_PATH
     destination.parent.mkdir(parents=True, exist_ok=True)
     shutil.copyfile(source, destination)
@@ -115,19 +119,23 @@ def main():
         raise SystemExit("Could not inspect the staged workflow change.")
 
     run("gh", "secret", "set", SECRET_NAME, "--repo", repo_slug, cwd=repo, input_text=callback_url)
-    remote_path = run(
-        "gh", "api", f"repos/{repo_slug}/contents/{WORKFLOW_PATH.as_posix()}?ref={default_branch}",
-        "--jq", ".path", cwd=repo, capture=True,
-    )
+    for path in (WORKFLOW_PATH, COLLECTOR_PATH):
+        remote_path = run(
+            "gh", "api", f"repos/{repo_slug}/contents/{path.as_posix()}?ref={default_branch}",
+            "--jq", ".path", cwd=repo, capture=True,
+        )
+        if remote_path != path.as_posix():
+            raise SystemExit(f"Repository file verification failed: {path}")
     secrets = json.loads(run(
         "gh", "secret", "list", "--repo", repo_slug, "--json", "name",
         cwd=repo, capture=True,
     ))
-    if remote_path != WORKFLOW_PATH.as_posix() or SECRET_NAME not in {item["name"] for item in secrets}:
+    if SECRET_NAME not in {item["name"] for item in secrets}:
         raise SystemExit("Repository workflow verification failed.")
 
     print(f"Configured PR validation for {repo_slug}.")
     print(f"Verified workflow: {WORKFLOW_PATH.as_posix()} on {default_branch}")
+    print(f"Verified trusted evidence collector: {COLLECTOR_PATH.as_posix()}")
     print(f"Verified Actions secret: {SECRET_NAME}")
 
 

@@ -36,22 +36,34 @@ custom_agent:
     Validate only the pull request identified by the HTTP trigger payload. Confirm
     that event is pull_request and action is opened, synchronize, or reopened,
     then require the repository, pull-request number, URL, base ref, head ref,
-    head SHA, and changed_files supplied by the trusted default-branch GitHub
-    Actions workflow. Verify that the repository URL and base ref match the
-    connected repository. Stop and report a payload validation failure if those
-    values disagree or required changed-file patches are absent.
+    base SHA, merge-base SHA, head repository, head SHA, changed_files, and
+    source_snapshots in schema_version 2 supplied by the trusted default-branch
+    GitHub Actions workflow. Verify that the repository URL and base ref match
+    the connected repository's configuration, not its cached commit. Require a
+    merge_base snapshot at merge_base_sha and a head snapshot at head_sha with
+    the appropriate repository identities. Stop with a payload validation
+    failure if these disagree or required patches or source files are absent.
 
     Use the ticketing-pr-validation skill to inspect the PR diff and relevant
-    surrounding files. Assess correctness, PostgreSQL TLS and identity handling,
+    surrounding files from the supplied commit-pinned source_snapshots. Do not
+    use the Code Access checkout or a moving main branch as PR source evidence.
+    A delayed Code Access sync must not change the review. If more source is
+    needed than the snapshots contain, report the exact missing evidence and
+    finish; never silently substitute cached files. The merge-base snapshot is
+    the before version of the PR, not necessarily the latest base branch tip.
+    Assess correctness, PostgreSQL TLS and identity handling,
     network safety, retries and timeouts, telemetry, tests, rollback, and likely
     customer impact. Use read-only Azure and Application Insights evidence only
     when it materially tests a claim about current deployed behavior. Charts are
     optional and must contain queried values with UTC windows, units, and labels.
 
-    Return a PASS, WARN, or BLOCK recommendation with prioritized findings,
+    Return a PASS, WARN, or BLOCK recommendation identifying head_sha and
+    merge_base_sha, with prioritized findings,
     evidence, affected files, missing checks, and concrete remediation in the
     agent thread. Do not deploy the pull request, run synthetic traffic, modify
     Azure or GitHub, create issues, send email, merge code, or claim that a PR
-    comment was posted. Do not invoke RunInTerminal or repeatedly retry an
+    comment was posted. Do not create or edit files, save memories or learnings,
+    or create reports. Return findings directly in the thread without requesting
+    approval for any write. Do not invoke RunInTerminal or repeatedly retry an
     unavailable GitHub tool. If the supplied evidence is insufficient, return
     BLOCK with the exact missing evidence and finish.

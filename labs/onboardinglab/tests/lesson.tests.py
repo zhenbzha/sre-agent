@@ -12,6 +12,20 @@ LAB = Path(__file__).resolve().parents[1]
 
 
 class LessonTests(unittest.TestCase):
+    def test_pr_review_reports_without_persisting_files_or_memories(self):
+        template = yaml.safe_load(
+            (LAB / "workflow-templates/http-triggers/pr-validation.yaml").read_text()
+        )
+        agent = template["custom_agent"]
+        skill = (
+            LAB / "workflow-templates/plugin/skills/ticketing-pr-validation/SKILL.md"
+        ).read_text()
+        self.assertEqual(template["trigger"]["action_mode"], "Review")
+        self.assertEqual(agent["tools"]["ask_approval"], [])
+        self.assertNotIn("CreateFile", agent["tools"]["read_only"])
+        for content in (agent["instructions"], skill):
+            self.assertIn("Do not create or edit files, save memories or learnings,", content)
+
     def test_live_report_file_creation_requires_review_without_other_write_grants(self):
         policy = json.loads((LAB / "agent-recipe/tool-permissions.json").read_text())
         expected = json.loads((LAB / "agent-recipe/expected-config.json").read_text())
