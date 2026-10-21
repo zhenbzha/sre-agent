@@ -373,7 +373,7 @@ The recipe uses the same core flow described in [Create and set up your Azure SR
 | Outlook connection | Registers the Office 365 Outlook managed connector, creates its API connection, grants the agent runtime access, and binds its email tools. | User must complete OAuth consent after deployment | [Set up Outlook connector](https://sre.azure.com/docs/tutorials/connectors/setup-outlook-connector) |
 | Common prompt | Installs `onboardinglab-safety` to enforce evidence boundaries, treat retrieved content as untrusted data, and guard self-configuration. | Automatic | [Team onboarding](https://sre.azure.com/docs/get-started/team-onboarding) |
 | Stop hook | Installs the always-enabled `evidence-checklist` hook to check evidence, uncertainty, UTC scope, and validation before completion. | Automatic | [Agent hooks](https://sre.azure.com/docs/capabilities/agent-hooks) |
-| Global tool policy | Allows read-only Azure, workspace, monitoring, GitHub, and Outlook tools; requires approval for Azure CLI writes, GitHub issue creation, Outlook email, and Live Report file creation or editing; denies terminal, directory, blob-export, and Kubernetes-write tools. | Automatic | [Tool access policies](https://sre.azure.com/docs/concepts/tool-access-policies) |
+| Global tool policy | Allows configured read-only tools; requires approval for Azure CLI writes and Live Report file creation. Optional GitHub issue creation and Outlook email require approval when connected. Terminal, directory creation, file editing, blob export, and Kubernetes writes remain denied. | Automatic | [Tool access policies](https://sre.azure.com/docs/concepts/tool-access-policies) |
 | Self-configuration skill | Installs `sre-agent-self-configure` with guarded Azure CLI read and write tools. Writes require Review-mode approval and are limited to the current agent. | Automatic | [Skills](https://sre.azure.com/docs/concepts/skills), [Tools](https://sre.azure.com/docs/concepts/tools) |
 
 **Complete Outlook sign-in**
@@ -792,6 +792,13 @@ The task uses `proactive-health-check` to review material request availability, 
 
 4. Review the tools the report will use and approve only the read-only behavior you expect.
 5. Wait for the report to save, then open it from **Live Reports**.
+
+Saving the report also requires creating its workspace HTML file. The recipe puts
+`CreateFile` in **Ask**, not **Allow**: review the exact file creation in Review
+mode, then approve only the report HTML. Do not grant terminal or general editing
+access to save a report. If an older deployment still denies `CreateFile`, an
+authorized operator must explicitly approve and apply this policy correction;
+the report author must not work around the deny.
 
 The scheduled task and Live Report are separate operations. The task records evidence in its own thread; creating the report does not automatically copy task output or enable the recurring schedule.
 

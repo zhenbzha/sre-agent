@@ -12,6 +12,21 @@ LAB = Path(__file__).resolve().parents[1]
 
 
 class LessonTests(unittest.TestCase):
+    def test_live_report_file_creation_requires_review_without_other_write_grants(self):
+        policy = json.loads((LAB / "agent-recipe/tool-permissions.json").read_text())
+        expected = json.loads((LAB / "agent-recipe/expected-config.json").read_text())
+        self.assertEqual(policy, expected["toolPermissions"])
+        self.assertIn("CreateFile", policy["ask"])
+        self.assertNotIn("CreateFile", policy["allow"])
+        self.assertNotIn("CreateFile", policy["deny"])
+        for tool in (
+            "RunInTerminal", "Terminal", "CreateDirectory", "SaveFileToBlob",
+            "ReplaceStringInFile", "MultiReplaceStringInFile", "RunKubectlWriteCommand",
+        ):
+            self.assertIn(tool, policy["deny"])
+            self.assertNotIn(tool, policy["allow"])
+            self.assertNotIn(tool, policy["ask"])
+
     def test_runtime_guide_has_all_learning_checkpoints(self):
         content = (
             LAB / "agent-recipe/config/skills/onboarding-lab-guide.md"

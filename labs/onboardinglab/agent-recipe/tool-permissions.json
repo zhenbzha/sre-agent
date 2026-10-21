@@ -11,13 +11,13 @@
     "system-mcp-monitor/*"
   ],
   "ask": [
-    "RunAzCliWriteCommands"
+    "RunAzCliWriteCommands",
+    "CreateFile"
   ],
   "deny": [
     "RunKubectlWriteCommand",
     "RunInTerminal",
     "Terminal",
-    "CreateFile",
     "CreateDirectory",
     "SaveFileToBlob",
     "ReplaceStringInFile",
