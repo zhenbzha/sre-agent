@@ -222,6 +222,30 @@ for (const phase of ['connect', 'query']) {
   });
 }
 
+for (const outcome of ['saved', 'timeout']) {
+  test(`hung client cleanup cannot delay a ${outcome} response or socket destruction`, { timeout: 1000 }, async (t) => {
+    t.mock.timers.enable({ apis: ['setTimeout'] });
+    let closeStarted;
+    const closing = new Promise((resolve) => { closeStarted = resolve; });
+    const client = {
+      end: () => { closeStarted(); return new Promise(() => {}); },
+    };
+    if (outcome === 'timeout') client.query = () => new Promise(() => {});
+    const f = fixture({ client });
+    let response;
+    const pending = invoke(f.handler).then((value) => { response = value; });
+    await Promise.resolve();
+    if (outcome === 'timeout') t.mock.timers.tick(5000);
+    await closing;
+    await new Promise(setImmediate);
+    assert.equal(response?.status, outcome === 'saved' ? 200 : 503,
+      'The response must complete without waiting for client.end()');
+    assert.equal(f.clients[0].destroyed, 1);
+    assert.equal((await invoke(f.handler, 'GET', '/healthz')).status, 200);
+    await pending;
+  });
+}
+
 test('missing configuration affects only checkout; health and assets work without a DB', async () => {
   const f = fixture({ handler: { env: {} } });
   assert.equal((await invoke(f.handler, 'GET', '/healthz')).status, 200);
