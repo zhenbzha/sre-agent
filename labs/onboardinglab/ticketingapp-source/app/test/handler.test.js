@@ -235,7 +235,7 @@ for (const outcome of ['saved', 'timeout']) {
     let response;
     const pending = invoke(f.handler).then((value) => { response = value; });
     await Promise.resolve();
-    if (outcome === 'timeout') t.mock.timers.tick(5000);
+    if (outcome === 'timeout') t.mock.timers.tick(4500);
     await closing;
     await new Promise(setImmediate);
     assert.equal(response?.status, outcome === 'saved' ? 200 : 503,
