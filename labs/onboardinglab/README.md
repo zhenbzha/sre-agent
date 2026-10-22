@@ -800,6 +800,18 @@ access to save a report. If an older deployment still denies `CreateFile`, an
 authorized operator must explicitly approve and apply this policy correction;
 the report author must not work around the deny.
 
+For a dedicated demo, the owner can instead explicitly pre-authorize `CreateFile`
+in the **report authoring thread only**, using the supported
+[thread-level Allow policy](https://learn.microsoft.com/en-us/azure/sre-agent/tool-access-policies#thread-level-policies-allow-only).
+Read `GET /api/v2/threads/<thread-id>/permissions`, preserve existing allow rules,
+then `PUT` the updated `allow` list with `CreateFile` and the returned ETag in
+`If-Match`. Read the policy back before continuing authoring. This allows file
+creation throughout that thread, not just one HTML path; keep the thread dedicated
+to the report. Leave the global Ask policy, Review mode, Azure write approvals and
+other denials unchanged. The permission persists for that authoring thread; a new
+report thread requires its own explicit authorization. This is an authorized
+configuration choice, not a repair of a failing approval-record service.
+
 The scheduled task and Live Report are separate operations. The task records evidence in its own thread; creating the report does not automatically copy task output or enable the recurring schedule.
 
 **Expected result**
