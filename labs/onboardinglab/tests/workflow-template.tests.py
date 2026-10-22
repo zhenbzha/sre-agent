@@ -22,6 +22,19 @@ spec.loader.exec_module(renderer)
 
 
 class WorkflowTemplateTests(unittest.TestCase):
+    def test_operational_skills_use_noncredential_app_service_reads(self):
+        for template, name in (
+            (TEMPLATE, "azure-monitor-rca"),
+            (SCHEDULED_TEMPLATE, "proactive-health-check"),
+        ):
+            with self.subTest(skill=name):
+                extras = renderer.render(template)
+                skill = next(item for item in extras["skills"] if item["metadata"]["name"] == name)
+                self.assertIn("az resource show --ids", skill["skillContent"])
+                self.assertIn("Do not use `az webapp show`", skill["skillContent"])
+                self.assertIn("Microsoft.Web/sites/publishxml/action", skill["skillContent"])
+                self.assertIn("Do not request publishing credentials", skill["skillContent"])
+
     def test_incident_template_renders_only_incident_resources(self):
         extras = renderer.render(TEMPLATE)
 

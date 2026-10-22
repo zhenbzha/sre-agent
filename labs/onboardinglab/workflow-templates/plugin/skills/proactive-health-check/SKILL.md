@@ -7,6 +7,14 @@ description: Assess SCM material request availability, failures, latency, depend
 
 Use the connected application telemetry and read-only Azure tools to assess the SCM material request service. Keep the `POST /checkout` telemetry filter; resource and workflow identifiers have not changed.
 
+For App Service metadata, use `az resource show --ids <app-resource-id> --api-version 2024-04-01`
+and read `properties.state`, `properties.virtualNetworkSubnetId` and `tags`.
+Do not use `az webapp show`: it also retrieves publishing profiles and can require
+`Microsoft.Web/sites/publishxml/action`, even with a narrow `--query`.
+Do not request publishing credentials or additional authorization for that
+metadata read. Use the ordinary ARM resource read instead; report any remaining
+access gap without blocking the rest of the health check.
+
 1. Confirm the UTC analysis window and the Application Insights resource being queried.
 2. Measure material request volume, availability, failure rate, and latency over the last 24 hours. Separate input-validation errors from server/database failures. A healthy `/healthz` is not proof of saved requests.
 3. Discover the selected option from the App Service `workloadOption` tag or the managed resource group's `onboardingLabWorkloadOption` tag. Review App Service resource health and configuration signals. For `app-service-postgresql`, also review PostgreSQL dependency outcomes and relevant database and network state.

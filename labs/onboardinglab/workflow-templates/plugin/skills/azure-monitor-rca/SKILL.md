@@ -13,6 +13,14 @@ Obtain the alert instance ID and rule title, severity, affected resource IDs, UT
 
 ## Workflow
 
+For App Service metadata, use `az resource show --ids <app-resource-id> --api-version 2024-04-01`
+and read `properties.state`, `properties.virtualNetworkSubnetId` and `tags`.
+Do not use `az webapp show`: it also retrieves publishing profiles and can require
+`Microsoft.Web/sites/publishxml/action`, even with a narrow `--query`.
+Do not request publishing credentials or additional authorization for that
+metadata read. Use the ordinary ARM resource read instead; report any remaining
+access gap without blocking the rest of the investigation.
+
 1. Confirm the alert belongs to the supplied rule and resources. Read its current monitor condition and customer impact; an alert title alone does not prove a database or network failure. Use the alert instance ID as the incident correlation key, preserving it across retries and merged investigations.
 2. Load the available telemetry tools and inspect the actual schema. For Application Insights component queries, inspect `requests` and `dependencies`; workspace queries may instead use `AppRequests` and `AppDependencies`. Bound queries to the affected component, operation and UTC interval. Measure request failures, response codes, latency and dependency symptoms. Distinguish no traffic or delayed ingestion from successful recovery. Do not infer shared operation IDs unless the telemetry actually contains them.
 3. Use the attached telemetry and Azure read tools to investigate directly. If a delegation tool and named specialists are configured, you may delegate bounded read-only checks. Supply the scope, alert ID, interval, evidence, and requested output. Missing delegation must not block direct investigation; never claim a specialist ran without its result.
