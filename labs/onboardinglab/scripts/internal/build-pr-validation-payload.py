@@ -8,7 +8,6 @@ import os
 import re
 import subprocess
 import sys
-import time
 from pathlib import Path
 from urllib.parse import quote
 
@@ -60,28 +59,25 @@ def source_path(value):
 def pr_identity(pr):
     return (
         pr["number"], pr["html_url"], pr["base"]["repo"]["full_name"],
-        pr["base"]["ref"], pr["base"]["sha"], pr["head"]["repo"]["full_name"],
+        pr["base"]["ref"], pr["head"]["repo"]["full_name"],
         pr["head"]["ref"], pr["head"]["sha"],
     )
 
 
 def current_event_pr(api, endpoint, expected):
-    # Event delivery can precede the REST view of a reopened or updated PR.
-    fields = ("number", "url", "base_repo", "base_ref", "base_sha",
+    # Base metadata can advance between the event and the PR API response.
+    fields = ("number", "url", "base_repo", "base_ref",
               "head_repo", "head_ref", "head_sha")
-    for attempt in range(4):
-        current = api(endpoint)
-        differences = [
-            field for field, actual, wanted in
-            zip(fields, pr_identity(current), pr_identity(expected)) if actual != wanted
-        ]
-        if current["state"] == "open" and not differences:
-            return current
-        if attempt < 3:
-            time.sleep(2 ** attempt)
+    current = api(endpoint)
+    differences = [
+        field for field, actual, wanted in
+        zip(fields, pr_identity(current), pr_identity(expected)) if actual != wanted
+    ]
+    if current["state"] == "open" and not differences:
+        return current
     details = ", ".join(differences) or "state"
     raise ValueError(
-        f"PR changed since this event or has not propagated (mismatch: {details}; "
+        f"PR changed since this event (mismatch: {details}; "
         f"state: {current['state']}; "
         f"event_base_sha: {sha(expected['base']['sha'])}; "
         f"api_base_sha: {sha(current['base']['sha'])}; "
@@ -108,11 +104,12 @@ def build_payload(event, repository, api=github_api):
             pr["base"]["repo"]["full_name"] == repository and
             pr["html_url"] == f"https://github.com/{repository}/pull/{number}",
             "Event repository or PR URL does not match the trusted workflow.")
-    base_sha = sha(pr["base"]["sha"])
+    event_base_sha = sha(pr["base"]["sha"])
     head_sha = sha(pr["head"]["sha"])
     head_repo = slug(pr["head"]["repo"]["full_name"])
     pr_endpoint = f"repos/{repository}/pulls/{number}"
     current = current_event_pr(api, pr_endpoint, pr)
+    base_sha = sha(current["base"]["sha"])
     count = current["changed_files"]
     require(type(count) is int and 0 < count <= MAX_CHANGED_FILES,
             "PR must contain between 1 and 100 changed files.")
@@ -122,7 +119,7 @@ def build_payload(event, repository, api=github_api):
         f"{quote(head_repo.split('/')[0], safe='')}:{head_sha}?per_page=1"
     )
     require(comparison["base_commit"]["sha"] == base_sha,
-            "Comparison base does not match the event.")
+            "Comparison base does not match the pinned PR API snapshot.")
     merge_base = sha(comparison["merge_base_commit"]["sha"])
     changes = comparison["files"]
     require(len(changes) == count, "Incomplete changed-file evidence; nothing was delivered.")
@@ -194,6 +191,7 @@ def build_payload(event, repository, api=github_api):
         "repo": repository, "pr_number": number, "pr_url": pr["html_url"],
         "pr_diff_url": pr["diff_url"], "pr_author": pr["user"]["login"],
         "base_ref": pr["base"]["ref"], "base_sha": base_sha,
+        "event_base_sha": event_base_sha,
         "merge_base_sha": merge_base, "head_repo": head_repo,
         "head_ref": pr["head"]["ref"], "head_sha": head_sha,
         "changed_files": changed_files, "source_snapshots": snapshots,
@@ -201,6 +199,7 @@ def build_payload(event, repository, api=github_api):
     serialize(payload)
     latest = api(pr_endpoint)
     require(latest["state"] == "open" and pr_identity(latest) == pr_identity(pr) and
+            latest["base"]["sha"] == base_sha and
             latest["changed_files"] == count,
             "PR changed while evidence was collected; nothing was delivered.")
     return payload

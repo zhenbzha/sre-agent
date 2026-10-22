@@ -43,6 +43,9 @@ custom_agent:
     merge_base snapshot at merge_base_sha and a head snapshot at head_sha with
     the appropriate repository identities. Stop with a payload validation
     failure if these disagree or required patches or source files are absent.
+    The base_sha is pinned from the PR API snapshot used for collection.
+    The event_base_sha records the event's earlier base metadata and may differ;
+    that difference alone is not an identity failure.
 
     Use the ticketing-pr-validation skill to inspect the PR diff and relevant
     surrounding files from the supplied commit-pinned source_snapshots. Do not

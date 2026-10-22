@@ -15,6 +15,13 @@ Use when a verified GitHub pull-request event is received through the onboarding
 4. Require exactly two snapshots: `merge_base` with `repo` and `commit_sha: merge_base_sha`, and `head` with `repo: head_repo` and `commit_sha: head_sha`. Each present file has a unique `path`, `blob_sha`, and complete `content`. For each changed file, require its before content at the merge base unless added, and after content at the head unless removed. For renames, the before path is `previous_filename`. A removed context file may have `absent: true` at the head; never treat it as an empty file.
 5. Stop with a `BLOCK` payload-validation result when identity fields, patches, or required source evidence are absent, inconsistent, or too incomplete to review. The collector rejects truncated trees, unavailable or non-text files, files over 64 KiB, and payloads over 256 KiB instead of sending partial evidence. Do not guess a branch, commit, repository, or diff. Do not use `RunInTerminal` or repeatedly retry an unavailable tool.
 
+`base_sha` is the immutable base selected from the PR API snapshot at collection
+start. `event_base_sha` records the event's base metadata for traceability and
+may be older. Do not reject a review solely because these two values differ.
+The collector checks the event's repository, refs and head SHA against the PR
+API, then rechecks that identity, the selected base SHA and changed-file count
+before delivery.
+
 ## Review workflow
 
 1. Read the supplied changed-file patches and relevant surrounding files only from the commit-pinned `source_snapshots`. The before version is the merge base, not the potentially newer `base_sha`. The head snapshot also includes the lab's database helper, handler, server, package manifest, app README, browser code, and handler tests. Focus on behavior changed by the pull request rather than reviewing the whole repository.

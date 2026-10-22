@@ -105,14 +105,12 @@ class GitHub:
 class PayloadTests(unittest.TestCase):
     def setUp(self):
         self.github = GitHub()
-        sleep = patch.object(collector.time, "sleep")
-        self.sleep = sleep.start()
-        self.addCleanup(sleep.stop)
 
     def test_pins_before_to_merge_base_and_context_to_exact_head(self):
         payload = self.github.collect()
         self.assertEqual(payload["schema_version"], 2)
         self.assertEqual(payload["base_sha"], BASE)
+        self.assertEqual(payload["event_base_sha"], BASE)
         before, after = payload["source_snapshots"]
         self.assertEqual(before["commit_sha"], MERGE_BASE)
         self.assertEqual(after["commit_sha"], HEAD)
@@ -142,43 +140,79 @@ class PayloadTests(unittest.TestCase):
             f"repos/{REPO}/compare/{BASE}...contributor:{HEAD}?per_page=1", self.github.calls,
         )
 
-    def test_stale_event_fails_after_bounded_metadata_readback(self):
+    def test_stale_head_event_fails_before_source_collection(self):
         self.github.pr["head"]["sha"] = "d" * 40
         with self.assertRaisesRegex(ValueError, "changed since this event"):
             self.github.collect()
-        self.assertEqual(len(self.github.calls), 4)
-        self.assertEqual([call.args[0] for call in self.sleep.call_args_list], [1, 2, 4])
+        self.assertEqual(len(self.github.calls), 1)
         self.assertTrue(all(call.endswith("/pulls/2") for call in self.github.calls))
 
-    def test_event_can_arrive_before_reopened_state_propagates(self):
-        stale = copy.deepcopy(self.github.pr)
-        stale["state"] = "closed"
-        original_api = self.github.api
-        calls = 0
-
-        def api(endpoint):
-            nonlocal calls
-            calls += 1
-            return stale if calls == 1 else original_api(endpoint)
-
-        payload = collector.build_payload(self.github.event, REPO, api)
+    def test_reopened_event_with_older_base_pins_current_pr_api_base(self):
+        event_base = "44b7006ed96de1cd7d824219d303635a79022e1b"
+        api_base = "c8416326e03625ff0c5d68d0e7113930f887aa28"
+        self.github.event["pull_request"]["base"]["sha"] = event_base
+        self.github.pr["base"]["sha"] = api_base
+        self.github.comparison["base_commit"]["sha"] = api_base
+        payload = self.github.collect()
+        self.assertEqual(payload["event_base_sha"], event_base)
+        self.assertEqual(payload["base_sha"], api_base)
         self.assertEqual(payload["head_sha"], HEAD)
-        self.sleep.assert_called_once_with(1)
+        self.assertIn(
+            f"repos/{REPO}/compare/{api_base}...example:{HEAD}?per_page=1",
+            self.github.calls,
+        )
+        self.assertFalse(any(event_base in call for call in self.github.calls))
+        self.assertEqual(payload["source_snapshots"][0]["commit_sha"], MERGE_BASE)
 
     def test_mismatch_error_identifies_the_field_without_sending_source(self):
         self.github.pr["base"]["sha"] = "d" * 40
-        with self.assertRaisesRegex(ValueError, "mismatch: base_sha") as raised:
+        self.github.pr["head"]["sha"] = "e" * 40
+        with self.assertRaisesRegex(ValueError, "mismatch: head_sha") as raised:
             self.github.collect()
         self.assertIn(f"event_base_sha: {BASE}", str(raised.exception))
         self.assertIn(f"api_base_sha: {'d' * 40}", str(raised.exception))
         self.assertIn(f"event_head_sha: {HEAD}", str(raised.exception))
-        self.assertIn(f"api_head_sha: {HEAD}", str(raised.exception))
+        self.assertIn(f"api_head_sha: {'e' * 40}", str(raised.exception))
+
+    def test_repository_and_branch_identity_remain_strict(self):
+        for side, field in (("base", "ref"), ("head", "ref"),
+                            ("base", "repo"), ("head", "repo")):
+            with self.subTest(side=side, field=field):
+                github = GitHub()
+                github.pr[side][field] = (
+                    {"full_name": "other/repo"} if field == "repo" else "other-branch"
+                )
+                with self.assertRaisesRegex(ValueError, "changed since this event"):
+                    github.collect()
+                self.assertEqual(len(github.calls), 1)
+
+    def test_invalid_live_base_sha_is_rejected(self):
+        self.github.pr["base"]["sha"] = "main"
+        with self.assertRaisesRegex(ValueError, "immutable"):
+            self.github.collect()
 
     def test_pr_moving_during_collection_fails_before_delivery(self):
-        self.github.after_collection = copy.deepcopy(self.github.pr)
-        self.github.after_collection["base"]["sha"] = "d" * 40
-        with self.assertRaisesRegex(ValueError, "changed while evidence was collected"):
-            self.github.collect()
+        for side, field, value in (
+            ("base", "sha", "d" * 40), ("head", "sha", "e" * 40),
+            ("base", "ref", "other-branch"), ("head", "ref", "other-branch"),
+            ("base", "repo", {"full_name": "other/repo"}),
+            ("head", "repo", {"full_name": "other/repo"}),
+        ):
+            with self.subTest(side=side, field=field):
+                github = GitHub()
+                github.after_collection = copy.deepcopy(github.pr)
+                github.after_collection[side][field] = value
+                with self.assertRaisesRegex(ValueError, "changed while evidence was collected"):
+                    github.collect()
+
+    def test_closed_or_changed_file_count_during_collection_is_rejected(self):
+        for field, value in (("state", "closed"), ("changed_files", 2)):
+            with self.subTest(field=field):
+                github = GitHub()
+                github.after_collection = copy.deepcopy(github.pr)
+                github.after_collection[field] = value
+                with self.assertRaisesRegex(ValueError, "changed while evidence was collected"):
+                    github.collect()
 
     def test_closed_pr_is_not_delivered(self):
         self.github.pr["state"] = "closed"

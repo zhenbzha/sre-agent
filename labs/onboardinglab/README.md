@@ -919,11 +919,14 @@ The trusted default-branch workflow sends schema version 2: GitHub's PR identity
 base/head/merge-base SHAs, comparison patches and complete text snapshots pinned
 to the merge base and head. The head snapshot includes the changed files plus
 the database helper, handler, server, package manifest, app README, browser code
-and handler tests. Before sending, the collector verifies blob hashes and checks
-that the PR has not moved since the event or during collection.
-The initial metadata check allows four reads with 1/2/4-second waits for event
-propagation; it still requires an exact identity match and reports the
-mismatched fields on failure. Collection never proceeds on a stale identity.
+and handler tests. The collector requires the repository, refs and head SHA to
+match the event, then pins `base_sha` from the current PR API response. An event
+can contain older base metadata even when its head is unchanged, so that value
+is retained separately as `event_base_sha`, not required to equal `base_sha`.
+All comparisons and source reads use immutable SHAs. Before sending, the
+collector verifies blob hashes and rechecks the PR identity, pinned base SHA
+and changed-file count. A head update, retargeting, closure or base change during
+collection fails explicitly; it never retries until mismatched identities agree.
 
 Collection fails explicitly for more than 100 changed files, missing patches,
 truncated trees, unavailable/non-text/non-regular files, files over 64 KiB, or a
