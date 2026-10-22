@@ -87,9 +87,9 @@ test('checkout inserts submitted fields with fresh verified-TLS clients and retu
     assert.equal(client.closed, 1);
     assert.equal(client.destroyed, 1);
     assert.deepEqual(client.config.ssl, { rejectUnauthorized: true });
-    assert.equal(client.config.connectionTimeoutMillis, 5000);
-    assert.equal(client.config.query_timeout, 5000);
-    assert.equal(client.config.statement_timeout, 5000);
+    assert.equal(client.config.connectionTimeoutMillis, 4500);
+    assert.equal(client.config.query_timeout, 4500);
+    assert.equal(client.config.statement_timeout, 4500);
     assert.equal(client.config.host, env.POSTGRES_HOST);
     assert.equal(typeof client.config.password, 'function');
   }
@@ -235,7 +235,7 @@ for (const outcome of ['saved', 'timeout']) {
     let response;
     const pending = invoke(f.handler).then((value) => { response = value; });
     await Promise.resolve();
-    if (outcome === 'timeout') t.mock.timers.tick(5000);
+    if (outcome === 'timeout') t.mock.timers.tick(4500);
     await closing;
     await new Promise(setImmediate);
     assert.equal(response?.status, outcome === 'saved' ? 200 : 503,
@@ -290,7 +290,7 @@ test('missing UAMI client id fails closed without creating a client or acquiring
   assert.deepEqual(f.scopes, []);
 });
 
-test('token acquisition is lazy and a hung credential shares the five-second deadline', async (t) => {
+test('token acquisition is lazy and a hung credential shares the 4.5-second deadline', async (t) => {
   t.mock.timers.enable({ apis: ['setTimeout'] });
   let tokenCalls = 0;
   let rejectToken;
@@ -306,7 +306,7 @@ test('token acquisition is lazy and a hung credential shares the five-second dea
   const pending = invoke(f.handler).then((response) => { completed = true; return response; });
   await Promise.resolve();
   assert.equal(tokenCalls, 1);
-  t.mock.timers.tick(4999);
+  t.mock.timers.tick(4499);
   await Promise.resolve();
   assert.equal(completed, false);
   t.mock.timers.tick(1);
@@ -322,7 +322,7 @@ test('token acquisition is lazy and a hung credential shares the five-second dea
   assert.equal(JSON.stringify({ response, requests: f.requests, dependencies: f.dependencies }).includes(token), false);
 });
 
-test('token acquisition and query share a single total five-second budget', async (t) => {
+test('token acquisition and query share a single total 4.5-second budget', async (t) => {
   t.mock.timers.enable({ apis: ['setTimeout'] });
   let resolveToken;
   let queryStarted;
@@ -336,7 +336,7 @@ test('token acquisition and query share a single total five-second budget', asyn
   t.mock.timers.tick(4000);
   resolveToken({ token, expiresOnTimestamp: Date.now() + 60000 });
   await querying;
-  t.mock.timers.tick(1000);
+  t.mock.timers.tick(500);
   assert.equal((await pending).status, 503);
   assert.equal(f.requests[0].properties.outcome, 'timeout');
   assert.equal(f.clients[0].closed, 1);
@@ -344,13 +344,13 @@ test('token acquisition and query share a single total five-second budget', asyn
 });
 
 for (const phase of ['connect', 'query']) {
-  test(`${phase} hang is bounded by 5 seconds and destroyed`, async (t) => {
+  test(`${phase} hang is bounded by 4.5 seconds and destroyed`, async (t) => {
     t.mock.timers.enable({ apis: ['setTimeout'] });
     const f = fixture({ client: { [phase]: () => new Promise(() => {}) } });
     let completed = false;
     const pending = invoke(f.handler).then((result) => { completed = true; return result; });
     await Promise.resolve();
-    t.mock.timers.tick(4999);
+    t.mock.timers.tick(4499);
     await Promise.resolve();
     assert.equal(completed, false);
     t.mock.timers.tick(1);
@@ -362,7 +362,7 @@ for (const phase of ['connect', 'query']) {
   });
 }
 
-test('connection and query share one total 5-second budget', async (t) => {
+test('connection and query share one total 4.5-second budget', async (t) => {
   t.mock.timers.enable({ apis: ['setTimeout'] });
   let connected;
   const f = fixture({ client: {
@@ -374,7 +374,7 @@ test('connection and query share one total 5-second budget', async (t) => {
   t.mock.timers.tick(4000);
   connected();
   await Promise.resolve();
-  t.mock.timers.tick(1000);
+  t.mock.timers.tick(500);
   assert.equal((await pending).status, 503);
   assert.equal(f.clients[0].destroyed, 1);
 });

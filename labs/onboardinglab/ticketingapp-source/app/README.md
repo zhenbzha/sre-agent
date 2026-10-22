@@ -50,7 +50,7 @@ operator initializer performs the fixed schema/seed operations described below.
 
 TLS certificate validation is mandatory. Each checkout constructs a fresh `pg`
 Client, connects and inserts the validated material, quantity and plant, then closes/destroys the connection in
-`finally`. One five-second `Promise.race` deadline covers token acquisition,
+`finally`. One 4.5-second `Promise.race` deadline covers token acquisition,
 connection and query together. An outstanding SDK token request may finish after
 the deadline, but does not delay the 503 or socket cleanup; late rejections are handled.
 Four attempts per
@@ -117,7 +117,7 @@ telemetry without blocking the app. Unavailable telemetry never fails checkout.
 Manual checkout makes one request. The traffic loop waits for each request to
 finish, then waits three seconds; it automatically stops at ten minutes. Stop
 aborts the browser request and prevents subsequent attempts; already-started
-server work can run until its five-second deadline. No traffic starts on load.
+server work can run until its 4.5-second deadline. No traffic starts on load.
 
 Supply this folder as the source app to the parent azd integration. Runtime start
 command is `npm start`; production dependencies must be installed on Linux during
