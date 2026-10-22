@@ -12,7 +12,7 @@ SCENARIOS = {
         "title": "Tighten checkout database deadline",
         "body": """## Summary
 
-Reduce the shared PostgreSQL checkout deadline from five seconds to 4.5 seconds and update the focused timing assertions.
+Reduce the shared PostgreSQL checkout deadline from five seconds to 4.5 seconds and update the focused timing assertions and documentation.
 
 ## Validation
 
@@ -92,6 +92,7 @@ def apply_scenario(repo, workload_option, scenario):
     handler = repo / "app" / "handler.js"
     database = repo / "app" / "database.js"
     tests = repo / "app" / "test" / "handler.test.js"
+    readme = repo / "app" / "README.md"
     if workload_option == "app-service" and scenario == "pass":
         replace_once(
             handler,
@@ -133,6 +134,21 @@ def apply_scenario(repo, workload_option, scenario):
                 raise SystemExit(f"Expected baseline text in {tests}: {old!r}")
             content = content.replace(old, new)
         tests.write_text(content, encoding="utf-8")
+        replace_once(
+            tests,
+            "if (outcome === 'timeout') t.mock.timers.tick(5000);",
+            "if (outcome === 'timeout') t.mock.timers.tick(4500);",
+        )
+        replace_once(
+            readme,
+            "One five-second `Promise.race` deadline",
+            "One 4.5-second `Promise.race` deadline",
+        )
+        replace_once(
+            readme,
+            "until its five-second deadline.",
+            "until its 4.5-second deadline.",
+        )
     else:
         replace_once(
             database,
@@ -185,6 +201,7 @@ def main():
             "labs/onboardinglab/ticketingapp-source/app/handler.js",
             "labs/onboardinglab/ticketingapp-source/app/database.js",
             "labs/onboardinglab/ticketingapp-source/app/test/handler.test.js",
+            "labs/onboardinglab/ticketingapp-source/app/README.md",
             cwd=repo,
         )
         run(

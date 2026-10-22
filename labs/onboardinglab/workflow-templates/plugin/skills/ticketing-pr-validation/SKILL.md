@@ -31,6 +31,44 @@ before delivery.
 5. If telemetry comparison is useful, use `PlotAreaChartWithCorrelation` for time-series behavior and `PlotBarChart` for bounded category comparisons. Include UTC windows, units, labels, and queried values. Do not chart empty, invented, or misleadingly sparse data.
 6. Assign one recommendation: `PASS` when no material issue remains, `WARN` for non-blocking risk or missing evidence, or `BLOCK` for a likely security, reliability, correctness, or operability regression.
 
+## Read-only PostgreSQL latency baseline
+
+For a database-deadline change, use the before/after snapshot values as the
+current/proposed deadlines. The example below uses the lab's 5000-to-4500 ms
+change; adapt both constants to the actual diff. Run against the deployed
+workload's Application Insights resource, not the agent's telemetry resource.
+
+```kusto
+let ProposedDeadlineMs = 4500.0;
+let CurrentDeadlineMs = 5000.0;
+dependencies
+| where timestamp >= ago(7d) and name == 'PostgreSQL connectivity'
+| summarize Samples = count(),
+    InChangedBand = countif(duration >= ProposedDeadlineMs and duration < CurrentDeadlineMs),
+    P50Ms = percentile(duration, 50), P95Ms = percentile(duration, 95),
+    P99Ms = percentile(duration, 99), MaxMs = max(duration),
+    FirstSeenUtc = min(timestamp), LastSeenUtc = max(timestamp)
+    by success, Outcome = tostring(customDimensions.outcome),
+       Simulated = tostring(customDimensions.simulated)
+```
+
+Use the successful rows to assess previously successful dependencies inside the
+changed deadline band. Keep failed outcomes separate; failure latency must not
+be described as successful-request latency. `duration` in this Application
+Insights table is numeric milliseconds; Log Analytics `AppDependencies` uses
+different names (`TimeGenerated`, `DurationMs`, `Success`, `Properties`).
+
+Use capitalized aliases such as `FirstSeenUtc` and `LastSeenUtc`, not unquoted
+KQL keywords such as `first`. See [Kusto identifier naming rules](https://learn.microsoft.com/en-us/kusto/query/schema-entities/entity-names?view=azure-monitor#avoid-naming-identifiers-as-language-keywords-or-literals).
+On `BadArgumentError`, inspect the detailed query error rather than repeating
+the same KQL against differently formatted resource identifiers.
+
+Report the UTC query window, first/last sample, counts and simulated status.
+Small, old or synthetic samples are limited historical evidence, not proof of
+current health or production safety. Zero observed successes in the changed
+band does not guarantee that future requests will be unaffected. Missing data
+or a query failure is an evidence gap, never a fabricated zero.
+
 ## Result
 
 Return the verified PR identity including `head_sha` and `merge_base_sha`, recommendation, prioritized findings with affected files and evidence, tests reviewed or missing, production-baseline evidence used, and concrete remediation. Link source evidence using the snapshot repository and commit SHA, not `main`. Distinguish tests inspected from tests actually run; the delivery workflow does not execute PR code or prove tests passed. State uncertainty explicitly. Keep the result in the agent thread; do not deploy, generate traffic, modify Azure or GitHub, create an issue, send email, merge code, or claim a PR comment was posted. Do not create or edit files, save memories or learnings, or create reports. Reusable observations belong in the review response, not a write-approval request.

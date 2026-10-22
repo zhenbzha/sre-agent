@@ -387,6 +387,18 @@ class PayloadTests(unittest.TestCase):
 
 
 class WorkflowContracts(unittest.TestCase):
+    def test_latency_baseline_keeps_safe_aliases_and_separate_outcomes(self):
+        skill = (LAB / "workflow-templates/plugin/skills/ticketing-pr-validation/SKILL.md").read_text()
+        query = skill.split("```kusto\n", 1)[1].split("```", 1)[0]
+        self.assertIn("FirstSeenUtc = min(timestamp)", query)
+        self.assertIn("LastSeenUtc = max(timestamp)", query)
+        self.assertIn("by success, Outcome", query)
+        self.assertIn("Simulated = tostring(customDimensions.simulated)", query)
+        self.assertIn("duration >= ProposedDeadlineMs and duration < CurrentDeadlineMs", query)
+        self.assertNotRegex(query, r"\b(first|last)\s*=")
+        self.assertIn("not proof of", skill)
+        self.assertIn("never a fabricated zero", skill)
+
     def test_installed_workflow_matches_trusted_template(self):
         template = LAB / "workflow-templates/http-triggers/github-pr-validation.yml"
         installed = ROOT / ".github/workflows/sre-agent-pr-validation.yml"
