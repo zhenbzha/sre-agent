@@ -3,6 +3,7 @@
 const elements = Object.fromEntries([
   'health', 'result', 'timing', 'checkout', 'start', 'stop', 'loop',
   'attempts', 'successes', 'failures', 'material', 'quantity', 'plant',
+  'request-form', 'receipt-detail',
 ].map((id) => [id, document.getElementById(id)]));
 let running = false;
 let busy = false;
@@ -18,10 +19,12 @@ function updateButtons() {
   elements.checkout.disabled = busy || running;
   elements.start.disabled = busy || running;
   elements.stop.disabled = !running;
+  elements.checkout.textContent = busy ? 'Submitting…' : 'Submit request';
+  elements.loop.dataset.state = running ? 'running' : 'idle';
   for (const id of ['material', 'quantity', 'plant']) elements[id].disabled = busy || running;
 }
 
-function stopTraffic(message = 'Material-request simulation stopped. No new requests will be sent.') {
+function stopTraffic(message = 'Stopped') {
   running = false;
   clearTimeout(nextAttempt);
   clearTimeout(deadlineTimer);
@@ -47,10 +50,17 @@ async function checkout() {
   for (const id of ['material', 'quantity', 'plant']) {
     if (!elements[id].reportValidity()) return;
   }
+  const request = {
+    material: elements.material.value,
+    quantity: Number(elements.quantity.value),
+    plant: elements.plant.value,
+  };
   busy = true;
   updateButtons();
   elements.result.textContent = 'Submitting material request…';
   elements.result.dataset.state = 'pending';
+  elements['receipt-detail'].textContent =
+    `${request.material} · ${request.quantity.toLocaleString()} units · ${request.plant}`;
   const started = performance.now();
   activeRequest = new AbortController();
   attempts += 1;
@@ -59,11 +69,7 @@ async function checkout() {
     const response = await fetch('/checkout', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        material: elements.material.value,
-        quantity: Number(elements.quantity.value),
-        plant: elements.plant.value,
-      }),
+      body: JSON.stringify(request),
       signal: AbortSignal.any([activeRequest.signal, AbortSignal.timeout(7000)]),
     });
     const data = await response.json();
@@ -95,14 +101,17 @@ async function checkout() {
 async function trafficStep() {
   if (!running) return;
   if (Date.now() >= deadline) {
-    stopTraffic('Material-request simulation ended after 10 minutes.');
+    stopTraffic('Finished after 10 minutes');
     return;
   }
   await checkout();
   if (running) nextAttempt = setTimeout(trafficStep, 3000);
 }
 
-elements.checkout.addEventListener('click', checkout);
+elements['request-form'].addEventListener('submit', (event) => {
+  event.preventDefault();
+  return checkout();
+});
 elements.start.addEventListener('click', () => {
   if (busy || running) return;
   for (const id of ['material', 'quantity', 'plant']) {
@@ -110,8 +119,8 @@ elements.start.addEventListener('click', () => {
   }
   running = true;
   deadline = Date.now() + 10 * 60 * 1000;
-  deadlineTimer = setTimeout(() => stopTraffic('Material-request simulation ended after 10 minutes.'), 10 * 60 * 1000);
-  elements.loop.textContent = 'Simulating plant demand with the selected material, quantity and plant.';
+  deadlineTimer = setTimeout(() => stopTraffic('Finished after 10 minutes'), 10 * 60 * 1000);
+  elements.loop.textContent = 'Running';
   updateButtons();
   void trafficStep();
 });

@@ -8,79 +8,91 @@
   <script src="/app.js" defer></script>
 </head>
 <body>
-  <main>
-    <nav aria-label="SCM Material Requests">
-      <a class="brand" href="#" aria-label="SCM Material Requests home">
-        <span class="brand-mark" aria-hidden="true">M</span>
-        <span>SCM<small>Material Requests</small></span>
+  <header class="app-header">
+    <nav class="header-content" aria-label="Main navigation">
+      <a class="brand" href="/" aria-label="SCM Material Requests home">
+        <svg viewBox="0 0 32 32" fill="none" aria-hidden="true">
+          <path d="m16 3 12 7v12l-12 7-12-7V10L16 3Z" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"/>
+          <path d="m4 10 12 7 12-7M16 17v12M10 6.5l12 7V19" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"/>
+        </svg>
+        <span>SCM<span class="brand-divider" aria-hidden="true">/</span><span class="brand-section">Supply operations</span></span>
       </a>
-      <span class="location">Manufacturing supply chain demo</span>
+      <span class="workspace-label">Demo workspace</span>
     </nav>
+  </header>
 
-    <section class="booking-shell" aria-labelledby="booking-title">
-      <div class="event-hero">
-        <div class="hero-copy">
-          <span class="eyebrow">MANUFACTURING SCM</span>
-          <h1 id="booking-title">SCM<br><em>Material Requests</em></h1>
-          <p>Request materials for your plant. This demo records synthetic requests, not production orders.</p>
-        </div>
-        <div class="event-meta" aria-label="Demo details">
-          <span><small>Process</small><strong>Material requisition</strong></span>
-          <span><small>Scope</small><strong>Plant operations</strong></span>
-          <span><small>Data</small><strong>Synthetic demo only</strong></span>
-        </div>
-      </div>
+  <main>
+    <div class="page-heading">
+      <h1>Material requests</h1>
+      <p>Request materials for your plant.</p>
+    </div>
 
-      <div class="booking-panel">
-        <div class="panel-heading">
-          <div>
-            <span class="step">YOUR MATERIALS</span>
-            <h2>Create a material request</h2>
-          </div>
-          <span class="availability">Demo environment</span>
+    <section class="request-workspace" aria-labelledby="request-title">
+      <form id="request-form" class="request-form">
+        <h2 id="request-title">New request</h2>
+        <div class="field">
+          <label for="material">Material</label>
+          <input id="material" name="material" maxlength="120" value="Steel plate" placeholder="Material name or part number" required>
         </div>
-
-        <div class="ticket-details">
-          <div class="detail">
-            <span class="detail-icon" aria-hidden="true">M</span>
-            <label for="material"><small>Material</small><input id="material" maxlength="120" value="Steel plate" required></label>
+        <div class="field-row">
+          <div class="field">
+            <label for="quantity">Quantity <span class="label-hint">(units)</span></label>
+            <input id="quantity" name="quantity" type="number" inputmode="numeric" min="1" max="1000000" step="1" value="20" required>
           </div>
-          <div class="detail">
-            <span class="detail-icon" aria-hidden="true">Q</span>
-            <label for="quantity"><small>Quantity (units)</small><input id="quantity" type="number" min="1" max="1000000" step="1" value="20" required></label>
-          </div>
-          <div class="detail">
-            <span class="detail-icon" aria-hidden="true">P</span>
-            <label for="plant"><small>Plant</small><input id="plant" maxlength="80" value="Lyon" required></label>
+          <div class="field">
+            <label for="plant">Plant</label>
+            <input id="plant" name="plant" maxlength="80" value="Lyon" placeholder="Plant name" required>
           </div>
         </div>
-
-        <div class="service-status">
-          <div><small>Application process</small><p id="health" role="status">Checking availability…</p><span>Process health does not verify database access.</span></div>
-          <div><small>Latest material request</small><p id="result" role="status" aria-live="polite">Ready to submit</p><span id="timing">Enter material, quantity and plant.</span></div>
+        <div class="form-actions">
+          <button id="checkout" type="submit" class="primary">Submit request</button>
         </div>
+      </form>
 
-        <button id="checkout" type="button" class="reserve">Submit request</button>
+      <aside class="confirmation" aria-label="Request confirmation">
+        <div class="confirmation-content">
+          <svg class="document-icon" viewBox="0 0 40 40" fill="none" aria-hidden="true">
+            <path d="M12 6h12l6 6v22H10V6h2ZM23 6v8h7M16 21h8M16 27h8" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/>
+          </svg>
+          <p class="confirmation-label">Latest request</p>
+          <p id="result" role="status" aria-live="polite" aria-atomic="true">No request submitted</p>
+          <p id="receipt-detail">Your request number will appear here after saving.</p>
+        </div>
+      </aside>
+    </section>
 
-        <aside class="lab-controls" aria-labelledby="lab-controls-title">
-          <div>
-            <span class="step" id="lab-controls-title">LAB CONTROLS</span>
-            <p id="loop" role="status">Material-request simulation is idle.</p>
-          </div>
+    <details class="demo-controls">
+      <summary>
+        <span>Demo controls</span>
+        <span id="loop" class="simulation-state" role="status">Idle</span>
+        <svg class="disclosure-icon" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+          <path d="m5 6 3 3 3-3" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+        </svg>
+      </summary>
+      <div class="demo-content">
+        <div class="simulation">
+          <h2>Request simulation</h2>
+          <p>Uses the current form values. Waits three seconds between requests and stops after ten minutes.</p>
           <div class="simulation-actions">
             <button id="start" type="button" class="secondary">Simulate material requests</button>
-            <button id="stop" type="button" class="quiet" disabled>Stop simulation</button>
+            <button id="stop" type="button" class="secondary" disabled>Stop simulation</button>
           </div>
-        </aside>
-
-        <div class="counters" aria-label="Material request activity">
-          <span><strong id="attempts">0</strong><small>Submitted</small></span>
-          <span><strong id="successes">0</strong><small>Successful</small></span>
-          <span><strong id="failures">0</strong><small>Failed</small></span>
+        </div>
+        <div class="diagnostics">
+          <dl class="counters" aria-label="Requests in this browser session">
+            <div><dt>Submitted</dt><dd id="attempts">0</dd></div>
+            <div><dt>Successful</dt><dd id="successes">0</dd></div>
+            <div><dt>Failed</dt><dd id="failures">0</dd></div>
+          </dl>
+          <p id="timing">No submissions this session.</p>
+          <div class="process-health">
+            <p id="health" role="status">Checking process health…</p>
+            <span>Process health does not verify database access.</span>
+          </div>
         </div>
       </div>
-    </section>
-    <footer><span>SCM Material Requests</span><span>Synthetic manufacturing demo</span></footer>
+    </details>
+    <footer>Demo data only. No production orders.</footer>
   </main>
 </body>
 </html>

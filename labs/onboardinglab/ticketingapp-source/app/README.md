@@ -114,6 +114,16 @@ telemetry without blocking the app. Unavailable telemetry never fails checkout.
 
 ## Traffic and deployment handoff
 
+The interface focuses on the material-request form and its latest confirmation.
+Submit with the button or Enter; the confirmation keeps the submitted details
+and displays the exact database-generated request number. Failures remain
+explicit and do not imply that retrying is safe. No request history is invented
+or stored in the browser.
+
+Expand **Demo controls** for traffic simulation, session counters, response timing,
+and process health. These controls are collapsed by default; process health is
+not presented as database availability.
+
 Manual checkout makes one request. The traffic loop waits for each request to
 finish, then waits three seconds; it automatically stops at ten minutes. Stop
 aborts the browser request and prevents subsequent attempts; already-started
