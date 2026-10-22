@@ -82,7 +82,11 @@ def current_event_pr(api, endpoint, expected):
     details = ", ".join(differences) or "state"
     raise ValueError(
         f"PR changed since this event or has not propagated (mismatch: {details}; "
-        f"state: {current['state']}); use its latest event instead."
+        f"state: {current['state']}; "
+        f"event_base_sha: {sha(expected['base']['sha'])}; "
+        f"api_base_sha: {sha(current['base']['sha'])}; "
+        f"event_head_sha: {sha(expected['head']['sha'])}; "
+        f"api_head_sha: {sha(current['head']['sha'])}); use its latest event instead."
     )
 
 

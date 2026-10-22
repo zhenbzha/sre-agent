@@ -167,8 +167,12 @@ class PayloadTests(unittest.TestCase):
 
     def test_mismatch_error_identifies_the_field_without_sending_source(self):
         self.github.pr["base"]["sha"] = "d" * 40
-        with self.assertRaisesRegex(ValueError, "mismatch: base_sha"):
+        with self.assertRaisesRegex(ValueError, "mismatch: base_sha") as raised:
             self.github.collect()
+        self.assertIn(f"event_base_sha: {BASE}", str(raised.exception))
+        self.assertIn(f"api_base_sha: {'d' * 40}", str(raised.exception))
+        self.assertIn(f"event_head_sha: {HEAD}", str(raised.exception))
+        self.assertIn(f"api_head_sha: {HEAD}", str(raised.exception))
 
     def test_pr_moving_during_collection_fails_before_delivery(self):
         self.github.after_collection = copy.deepcopy(self.github.pr)
