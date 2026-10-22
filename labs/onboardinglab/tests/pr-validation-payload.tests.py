@@ -396,6 +396,9 @@ class WorkflowContracts(unittest.TestCase):
         self.assertIn("Simulated = tostring(customDimensions.simulated)", query)
         self.assertIn("duration >= ProposedDeadlineMs and duration < CurrentDeadlineMs", query)
         self.assertNotRegex(query, r"\b(first|last)\s*=")
+        self.assertIn("--offset 7d", skill)
+        self.assertIn("CLI default is `1h`", skill)
+        self.assertIn("`timespan` to `P7D`", skill)
         self.assertIn("not proof of", skill)
         self.assertIn("never a fabricated zero", skill)
 

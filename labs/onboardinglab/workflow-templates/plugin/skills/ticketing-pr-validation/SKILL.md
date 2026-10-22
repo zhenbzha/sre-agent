@@ -38,6 +38,13 @@ current/proposed deadlines. The example below uses the lab's 5000-to-4500 ms
 change; adapt both constants to the actual diff. Run against the deployed
 workload's Application Insights resource, not the agent's telemetry resource.
 
+Set the request's time window explicitly as well as the KQL filter. For
+`az monitor app-insights query`, pass `--offset 7d` for this query, or equivalent
+explicit `--start-time` and `--end-time` bounds. The [CLI default is `1h`](https://learn.microsoft.com/en-us/cli/azure/monitor/app-insights?view=azure-cli-latest#az-monitor-app-insights-query);
+`ago(7d)` in KQL does not widen that request window. For the Application Insights
+query API, set `timespan` to `P7D`. Keep both windows aligned if changing the
+lookback, including when checking for missing telemetry.
+
 ```kusto
 let ProposedDeadlineMs = 4500.0;
 let CurrentDeadlineMs = 5000.0;

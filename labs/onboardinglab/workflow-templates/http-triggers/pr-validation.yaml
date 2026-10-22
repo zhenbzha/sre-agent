@@ -60,7 +60,9 @@ custom_agent:
     when it materially tests a claim about current deployed behavior. Charts are
     optional and must contain queried values with UTC windows, units, and labels.
     For database-deadline changes, use the skill's read-only latency-baseline
-    query and disclose its sample size, age and simulated status.
+    query with an explicit query time window matching the KQL lookback
+    (--offset 7d for the seven-day Azure CLI query; its default is only 1h).
+    Disclose its sample size, age and simulated status.
 
     Return a PASS, WARN, or BLOCK recommendation identifying head_sha and
     merge_base_sha, with prioritized findings,
