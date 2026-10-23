@@ -3,10 +3,26 @@
 const elements = Object.fromEntries([
   'health', 'result', 'timing', 'checkout', 'start', 'stop', 'loop',
   'attempts', 'successes', 'failures', 'material', 'quantity', 'plant',
-  'request-form', 'receipt-detail',
+  'request-form', 'receipt-detail', 'feedback', 'dismiss-feedback', 'form-status',
+  'request-dialog', 'dialog-title', 'new-request', 'close-request', 'cancel-request',
+  'configure-simulation', 'sim-material', 'sim-quantity', 'sim-plant',
+  'show-requests', 'show-demo', 'requests-view', 'demo-view', 'view-label',
+  'request-panel', 'request-rows', 'request-count', 'list-error', 'search',
+  'plant-filter', 'known-plants', 'sort', 'refresh', 'page-info', 'previous', 'next',
+  'coverage', 'updated',
 ].map((id) => [id, document.getElementById(id)]));
+const PAGE_SIZE = 10;
+let records = [];
+let loaded = false;
+let loading = false;
+let refreshQueued = false;
+let page = 0;
+let dialogMode = 'create';
+let dialogValues;
+let lastSavedId;
 let running = false;
 let busy = false;
+let leaving = false;
 let nextAttempt;
 let deadlineTimer;
 let deadline = 0;
@@ -14,14 +30,182 @@ let attempts = 0;
 let successes = 0;
 let failures = 0;
 let activeRequest;
+let activeList;
+
+function node(tag, text, className) {
+  const element = document.createElement(tag);
+  if (text !== undefined) element.textContent = text;
+  if (className) element.className = className;
+  return element;
+}
+
+function renderRequests() {
+  const query = elements.search.value.trim().toLocaleLowerCase();
+  const filtered = records.filter((record) =>
+    (!elements['plant-filter'].value || record.plant === elements['plant-filter'].value) &&
+    `#${record.request_id} ${record.material} ${record.plant}`.toLocaleLowerCase().includes(query));
+  const direction = elements.sort.value === 'oldest' ? 1 : -1;
+  filtered.sort((a, b) => direction * (Date.parse(a.created_at) - Date.parse(b.created_at) ||
+    (BigInt(a.request_id) > BigInt(b.request_id) ? 1 : BigInt(a.request_id) < BigInt(b.request_id) ? -1 : 0)));
+  page = Math.min(page, Math.max(0, Math.ceil(filtered.length / PAGE_SIZE) - 1));
+  const visible = filtered.slice(page * PAGE_SIZE, (page + 1) * PAGE_SIZE);
+  const rows = visible.map((record) => {
+    const row = node('tr');
+    if (record.request_id === lastSavedId) row.className = 'new-row';
+    const plant = node('td', undefined, 'plant-cell');
+    plant.append(node('span', record.plant, 'plant-name'));
+    const created = node('td', undefined, 'created-cell');
+    const time = node('time');
+    const date = new Date(record.created_at);
+    time.dateTime = record.created_at;
+    time.title = date.toISOString();
+    time.append(node('span', date.toLocaleDateString(undefined, { day: '2-digit', month: 'short', year: 'numeric' })),
+      node('span', date.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' }), 'created-time'));
+    created.append(time);
+    row.append(node('td', `#${record.request_id}`, 'request-id'),
+      node('td', record.material, 'material-cell'),
+      node('td', record.quantity.toLocaleString(), 'numeric'), plant, created);
+    return row;
+  });
+  if (!rows.length) {
+    const row = node('tr');
+    const cell = node('td', undefined, 'empty-state');
+    cell.colSpan = 5;
+    cell.append(node('strong', !loaded ? 'Requests unavailable' :
+      records.length ? 'No matching requests' : 'No requests yet'));
+    cell.append(node('div', !loaded ? 'Refresh the list to try again.' :
+      records.length ? 'Try a different material, request ID, or plant.' : 'Create a material request to get started.'));
+    if (loaded && records.length) {
+      const clear = node('button', 'Clear filters', 'secondary');
+      clear.type = 'button';
+      clear.addEventListener('click', () => {
+        elements.search.value = '';
+        elements['plant-filter'].value = '';
+        page = 0;
+        renderRequests();
+      });
+      cell.append(clear);
+    }
+    row.append(cell);
+    rows.push(row);
+  }
+  elements['request-rows'].replaceChildren(...rows);
+  elements['request-count'].textContent = loaded ? records.length.toLocaleString() : 'Unavailable';
+  elements['page-info'].textContent = !loaded ? 'Not loaded' : filtered.length
+    ? `${page * PAGE_SIZE + 1}-${Math.min((page + 1) * PAGE_SIZE, filtered.length)} of ${filtered.length} requests`
+    : '0 matching requests';
+  elements.previous.disabled = page === 0;
+  elements.next.disabled = (page + 1) * PAGE_SIZE >= filtered.length;
+}
+
+function validList(data) {
+  return data?.success === true && Array.isArray(data.requests) &&
+    Number.isInteger(data.limit) && data.limit >= 1 && data.limit <= 100 &&
+    data.requests.length <= data.limit && typeof data.hasMore === 'boolean' &&
+    data.requests.every((record) => record && typeof record.request_id === 'string' &&
+      /^[1-9][0-9]{0,18}$/.test(record.request_id) &&
+      typeof record.material === 'string' && record.material.length > 0 && record.material.length <= 120 &&
+      typeof record.plant === 'string' && record.plant.length > 0 && record.plant.length <= 80 &&
+      Number.isInteger(record.quantity) && record.quantity >= 1 && record.quantity <= 1000000 &&
+      typeof record.created_at === 'string' && Number.isFinite(Date.parse(record.created_at)));
+}
+
+async function loadRequests() {
+  if (loading) { refreshQueued = true; return; }
+  loading = true;
+  activeList = new AbortController();
+  elements.refresh.disabled = true;
+  elements['request-panel'].setAttribute('aria-busy', 'true');
+  try {
+    const response = await fetch('/material-requests', {
+      signal: AbortSignal.any([activeList.signal, AbortSignal.timeout(7000)]),
+    });
+    const data = await response.json();
+    if (!response.ok) throw new Error(typeof data.message === 'string' ? data.message : 'Saved requests could not be loaded.');
+    if (!validList(data)) throw new Error('The server returned an unexpected request list. Try refreshing.');
+    records = data.requests;
+    loaded = true;
+    const selection = elements['plant-filter'].value;
+    const plants = [...new Set(records.map((record) => record.plant))].sort((a, b) => a.localeCompare(b));
+    elements['known-plants'].replaceChildren(...plants.map((plant) => {
+      const option = node('option');
+      option.value = plant;
+      return option;
+    }));
+    if (selection && !plants.includes(selection)) plants.push(selection);
+    elements['plant-filter'].replaceChildren(...['', ...plants].map((plant) => {
+      const option = node('option', plant || 'All plants');
+      option.value = plant;
+      return option;
+    }));
+    elements['plant-filter'].value = selection;
+    elements['list-error'].hidden = true;
+    elements.coverage.textContent = `${data.hasMore ? `Showing the latest ${data.limit} saved requests. ` : ''}Times shown in your local timezone.`;
+    elements.updated.textContent = `Updated ${new Date().toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' })}`;
+    renderRequests();
+  } catch (error) {
+    if (!leaving) {
+      elements['list-error'].textContent = `${error.message || 'Saved requests could not be loaded.'}${loaded ? ' Showing the last loaded requests.' : ''}`;
+      elements['list-error'].hidden = false;
+      renderRequests();
+    }
+  } finally {
+    loading = false;
+    activeList = undefined;
+    elements.refresh.disabled = false;
+    elements['request-panel'].setAttribute('aria-busy', 'false');
+    if (refreshQueued && !leaving) { refreshQueued = false; void loadRequests(); }
+  }
+}
 
 function updateButtons() {
-  elements.checkout.disabled = busy || running;
-  elements.start.disabled = busy || running;
+  for (const id of ['checkout', 'start', 'new-request', 'configure-simulation', 'material', 'quantity', 'plant']) {
+    elements[id].disabled = busy || running;
+  }
   elements.stop.disabled = !running;
-  elements.checkout.textContent = busy ? 'Submitting…' : 'Submit request';
+  elements['close-request'].disabled = busy;
+  elements['cancel-request'].disabled = busy;
+  elements.checkout.textContent = busy ? 'Submitting...' : dialogMode === 'simulation' ? 'Use these values' : 'Submit request';
   elements.loop.dataset.state = running ? 'running' : 'idle';
-  for (const id of ['material', 'quantity', 'plant']) elements[id].disabled = busy || running;
+}
+
+function requestValues() {
+  return { material: elements.material.value, quantity: Number(elements.quantity.value), plant: elements.plant.value };
+}
+
+function updateSimulationValues() {
+  const request = requestValues();
+  elements['sim-material'].textContent = request.material;
+  elements['sim-quantity'].textContent = `${request.quantity.toLocaleString()} units`;
+  elements['sim-plant'].textContent = request.plant;
+}
+
+function setResult(message, state) {
+  elements.feedback.hidden = false;
+  elements.feedback.dataset.state = state;
+  elements.result.textContent = message;
+  elements.result.dataset.state = state;
+  elements['form-status'].textContent = message;
+  elements['form-status'].dataset.state = state;
+  elements['form-status'].hidden = false;
+}
+
+function openRequest(mode) {
+  if (busy || running) return;
+  dialogMode = mode;
+  dialogValues = requestValues();
+  elements['dialog-title'].textContent = mode === 'simulation' ? 'Simulation values' : 'New material request';
+  elements['form-status'].hidden = true;
+  updateButtons();
+  elements['request-dialog'].showModal();
+  elements.material.focus();
+}
+
+function cancelRequest() {
+  if (busy) return;
+  for (const [id, value] of Object.entries(dialogValues)) elements[id].value = value;
+  updateSimulationValues();
+  elements['request-dialog'].close();
 }
 
 function stopTraffic(message = 'Stopped') {
@@ -45,78 +229,102 @@ async function checkHealth() {
   }
 }
 
+function validForm() {
+  return ['material', 'quantity', 'plant'].every((id) => elements[id].reportValidity());
+}
+
 async function checkout() {
-  if (busy) return;
-  for (const id of ['material', 'quantity', 'plant']) {
-    if (!elements[id].reportValidity()) return;
-  }
-  const request = {
-    material: elements.material.value,
-    quantity: Number(elements.quantity.value),
-    plant: elements.plant.value,
-  };
+  if (busy || !validForm()) return;
+  const request = requestValues();
+  const simulated = running;
   busy = true;
   updateButtons();
-  elements.result.textContent = 'Submitting material request…';
-  elements.result.dataset.state = 'pending';
-  elements['receipt-detail'].textContent =
-    `${request.material} · ${request.quantity.toLocaleString()} units · ${request.plant}`;
+  updateSimulationValues();
+  setResult('Submitting material request...', 'pending');
+  elements['receipt-detail'].textContent = `${request.material} · ${request.quantity.toLocaleString()} units · ${request.plant}`;
   const started = performance.now();
   activeRequest = new AbortController();
   attempts += 1;
   elements.attempts.textContent = attempts;
+  let failureMessage;
+  let saved = false;
   try {
     const response = await fetch('/checkout', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(request),
       signal: AbortSignal.any([activeRequest.signal, AbortSignal.timeout(7000)]),
     });
     const data = await response.json();
     if (!response.ok || data.success !== true) {
-      elements.result.textContent = data.message || 'Material request failed.';
+      failureMessage = typeof data.message === 'string' ? data.message : undefined;
       throw new Error('Submission failed');
     }
+    if ((data.requestId !== undefined && (typeof data.requestId !== 'string' || !/^[1-9][0-9]{0,18}$/.test(data.requestId))) ||
+        (data.requestId === undefined && typeof data.message !== 'string')) {
+      throw new Error('Unexpected submission response');
+    }
     successes += 1;
-    elements.result.textContent = data.requestId ? `Request saved #${data.requestId}` : data.message;
-    elements.result.dataset.state = 'success';
+    saved = true;
+    lastSavedId = data.requestId;
+    setResult(data.requestId ? `Request saved #${data.requestId}` : data.message, 'success');
+    if (!simulated) {
+      elements['request-dialog'].close();
+      page = 0;
+      void loadRequests();
+    }
   } catch {
     failures += 1;
-    if (elements.result.dataset.state === 'pending' &&
-        elements.result.textContent === 'Submitting material request…') {
-      elements.result.textContent = 'Material request could not be confirmed. Check the outcome before retrying.';
-    }
-    elements.result.dataset.state = 'failure';
+    setResult(failureMessage || 'Material request could not be confirmed. Check the outcome before retrying.', 'failure');
   } finally {
     activeRequest = undefined;
     busy = false;
     elements.successes.textContent = successes;
     elements.failures.textContent = failures;
-    elements.timing.textContent = `${Math.round(performance.now() - started)} ms · ${new Date().toLocaleTimeString()}`;
+    elements.timing.textContent = `Latest attempt: ${Math.round(performance.now() - started)} ms · ${new Date().toLocaleTimeString()}`;
     updateButtons();
-    void checkHealth();
+    if (saved && !simulated) elements['new-request'].focus();
+    if (!leaving) void checkHealth();
   }
 }
 
 async function trafficStep() {
   if (!running) return;
-  if (Date.now() >= deadline) {
-    stopTraffic('Finished after 10 minutes');
-    return;
-  }
+  if (Date.now() >= deadline) { stopTraffic('Finished after 10 minutes'); return; }
   await checkout();
   if (running) nextAttempt = setTimeout(trafficStep, 3000);
 }
 
+function showView(demo) {
+  elements['requests-view'].hidden = demo;
+  elements['demo-view'].hidden = !demo;
+  elements['show-requests'].setAttribute('aria-current', demo ? 'false' : 'page');
+  elements['show-demo'].setAttribute('aria-current', demo ? 'page' : 'false');
+  elements['view-label'].textContent = demo ? 'Demo controls' : 'Material requests';
+  if (!demo) void loadRequests();
+}
+
+elements['show-requests'].addEventListener('click', () => showView(false));
+elements['show-demo'].addEventListener('click', () => showView(true));
+elements['new-request'].addEventListener('click', () => openRequest('create'));
+elements['configure-simulation'].addEventListener('click', () => openRequest('simulation'));
+for (const id of ['close-request', 'cancel-request']) {
+  elements[id].addEventListener('click', cancelRequest);
+}
+elements['request-dialog'].addEventListener('cancel', (event) => {
+  if (busy) event.preventDefault();
+  else cancelRequest();
+});
+elements['dismiss-feedback'].addEventListener('click', () => { elements.feedback.hidden = true; });
 elements['request-form'].addEventListener('submit', (event) => {
   event.preventDefault();
+  if (dialogMode === 'simulation') {
+    if (validForm()) { updateSimulationValues(); elements['request-dialog'].close(); }
+    return;
+  }
   return checkout();
 });
 elements.start.addEventListener('click', () => {
-  if (busy || running) return;
-  for (const id of ['material', 'quantity', 'plant']) {
-    if (!elements[id].reportValidity()) return;
-  }
+  if (busy || running || !validForm()) return;
   running = true;
   deadline = Date.now() + 10 * 60 * 1000;
   deadlineTimer = setTimeout(() => stopTraffic('Finished after 10 minutes'), 10 * 60 * 1000);
@@ -125,5 +333,12 @@ elements.start.addEventListener('click', () => {
   void trafficStep();
 });
 elements.stop.addEventListener('click', () => stopTraffic());
-window.addEventListener('pagehide', () => stopTraffic());
+elements.refresh.addEventListener('click', () => loadRequests());
+for (const [id, event] of [['search', 'input'], ['plant-filter', 'change'], ['sort', 'change']]) {
+  elements[id].addEventListener(event, () => { page = 0; renderRequests(); });
+}
+elements.previous.addEventListener('click', () => { page = Math.max(0, page - 1); renderRequests(); });
+elements.next.addEventListener('click', () => { page += 1; renderRequests(); });
+window.addEventListener('pagehide', () => { leaving = true; stopTraffic(); activeList?.abort(); });
 void checkHealth();
+void loadRequests();

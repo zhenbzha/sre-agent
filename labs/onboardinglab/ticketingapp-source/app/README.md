@@ -64,6 +64,7 @@ No connection pool can hide a deny rule behind an existing DB connection.
 | GET | `/` | Self-contained UI |
 | GET | `/app.js`, `/styles.css` | Only explicitly allowlisted static assets |
 | GET | `/healthz` | 200 JSON independent of database health |
+| GET | `/material-requests` | Latest 100 saved requests, newest ID first, with `limit` and `hasMore`; sanitized 503 if unavailable |
 | POST | `/checkout` | 200 with `success`, `simulated`, `message` and database-generated string `requestId`; sanitized 503 on failure |
 
 Known paths with other methods return 405 with `Allow`; unknown paths return
@@ -114,15 +115,30 @@ telemetry without blocking the app. Unavailable telemetry never fails checkout.
 
 ## Traffic and deployment handoff
 
-The interface focuses on the material-request form and its latest confirmation.
-Submit with the button or Enter; the confirmation keeps the submitted details
-and displays the exact database-generated request number. Failures remain
-explicit and do not imply that retrying is safe. No request history is invented
-or stored in the browser.
+The Metso-themed workspace lists actual saved requests from PostgreSQL. Search,
+plant filtering, date sorting and ten-row pages operate on the most recent 100
+records; the interface explicitly says when older records are outside that
+window. It does not invent requisition approval, inventory or fulfillment states.
+The graphite, mint and lime treatment references Metso's public website, with
+system fonts and a text wordmark; no external assets or UI libraries are loaded.
 
-Expand **Demo controls** for traffic simulation, session counters, response timing,
-and process health. These controls are collapsed by default; process health is
-not presented as database availability.
+**New request** opens a keyboard-accessible modal drawer. Submit with the button
+or Enter; the confirmation displays the exact database-generated request number
+and refreshes the list. Failed submissions remain explicit and do not imply that
+retrying is safe. Failed refreshes retain any previously loaded rows with a stale
+data warning, rather than presenting an empty list as current data.
+
+**Demo controls** is a separate navigation view for traffic simulation, session
+counters, response timing and process health. **Edit values** configures the
+simulation without submitting a request. No traffic starts on page load.
+
+Listing uses the same fresh connections, verified TLS, five-second database
+deadline and shared four-attempt concurrency limit as submissions. Its request
+telemetry is `GET /material-requests` and its dependency is
+`PostgreSQL request listing`, separate from the existing `POST /checkout` and
+`PostgreSQL connectivity` signals used by the demo alert and Live Report.
+The database-free workload returns an explicit 501 for listing; it does not
+fabricate saved requests. `/healthz` and startup remain database-independent.
 
 Manual checkout makes one request. The traffic loop waits for each request to
 finish, then waits three seconds; it automatically stops at ten minutes. Stop

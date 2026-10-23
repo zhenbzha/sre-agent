@@ -8,6 +8,8 @@ const { withDatabase } = require('./database');
 const MAX_DB_ATTEMPTS = 4;
 const MAX_BODY_BYTES = 2048;
 const INSERT_REQUEST = 'INSERT INTO material_requests (material, quantity, plant) VALUES ($1, $2, $3) RETURNING request_id';
+const LIST_LIMIT = 100;
+const LIST_REQUESTS = 'SELECT request_id, material, quantity, plant, created_at FROM material_requests ORDER BY request_id DESC LIMIT $1';
 class InputError extends Error {
   constructor(status, message) {
     super(message);
@@ -84,6 +86,60 @@ function createHandler({ createClient, getAccessToken, telemetry, env = process.
     }
   }
 
+  async function listRequests(response) {
+    const started = performance.now();
+    const workload = env.WORKLOAD_OPTION || 'app-service-postgresql';
+    let rows;
+    let outcome = 'busy';
+    if (workload === 'app-service-postgresql' && activeAttempts < MAX_DB_ATTEMPTS) {
+      activeAttempts += 1;
+      outcome = 'unavailable';
+      try {
+        const result = await withDatabase({
+          createClient, getAccessToken, env, onTimeout: () => { outcome = 'timeout'; },
+        }, (client) => client.query(LIST_REQUESTS, [LIST_LIMIT + 1]));
+        if (!Array.isArray(result.rows)) throw new Error('Unexpected database result');
+        rows = result.rows;
+        outcome = 'listed';
+      } catch {
+        // Return a sanitized failure; database errors can contain credentials.
+      } finally {
+        activeAttempts -= 1;
+        track('trackDependency', {
+          name: 'PostgreSQL request listing',
+          target: 'PostgreSQL',
+          dependencyTypeName: 'PostgreSQL',
+          data: LIST_REQUESTS,
+          duration: performance.now() - started,
+          success: rows !== undefined,
+          resultCode: rows !== undefined ? '0' : '1',
+          properties: { simulated: 'true', outcome },
+        });
+      }
+    } else if (workload !== 'app-service-postgresql') {
+      outcome = workload === 'app-service' ? 'database-free' : 'configuration-unavailable';
+    }
+    const status = rows !== undefined ? 200 : workload === 'app-service' ? 501 : 503;
+    track('trackRequest', {
+      name: 'GET /material-requests', url: 'http://localhost/material-requests',
+      duration: performance.now() - started, resultCode: String(status), success: status === 200,
+      properties: { simulated: 'true', outcome, 'http.method': 'GET' },
+    });
+    if (rows !== undefined) {
+      return json(response, 200, {
+        success: true, requests: rows.slice(0, LIST_LIMIT),
+        limit: LIST_LIMIT, hasMore: rows.length > LIST_LIMIT,
+      });
+    }
+    if (status === 503) response.setHeader('Retry-After', '3');
+    return json(response, status, {
+      success: false,
+      message: status === 501
+        ? 'Saved requests are not available in the database-free workload.'
+        : 'Saved requests could not be loaded. Try refreshing the list.',
+    });
+  }
+
   return async function handler(request, response) {
     response.setHeader('Cache-Control', 'no-store');
     response.setHeader('X-Content-Type-Options', 'nosniff');
@@ -95,7 +151,7 @@ function createHandler({ createClient, getAccessToken, telemetry, env = process.
     const path = (request.url || '').split('?')[0];
     const asset = assets.get(path);
     const allowedMethod = path === '/checkout' ? 'POST' : 'GET';
-    if (!asset && path !== '/healthz' && path !== '/checkout') {
+    if (!asset && path !== '/healthz' && path !== '/checkout' && path !== '/material-requests') {
       request.resume();
       return json(response, 404, { error: 'Not found' });
     }
@@ -112,6 +168,10 @@ function createHandler({ createClient, getAccessToken, telemetry, env = process.
       request.resume();
       response.writeHead(200, { 'Content-Type': asset.type });
       return response.end(asset.body);
+    }
+    if (path === '/material-requests') {
+      request.resume();
+      return listRequests(response);
     }
 
     const started = performance.now();

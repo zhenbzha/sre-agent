@@ -107,6 +107,85 @@ test('checkout inserts submitted fields with fresh verified-TLS clients and retu
   assert.ok(f.dependencies[0].duration >= 0);
 });
 
+test('request listing is read-only, bounded and uses fresh clients without changing checkout telemetry', async () => {
+  const rows = Array.from({ length: 101 }, (_, i) => ({
+    request_id: String(9007199254740993n + BigInt(i)), material: 'Wear plate',
+    quantity: 4, plant: 'Lyon', created_at: new Date('2026-10-22T10:00:00Z'),
+  }));
+  const queries = [];
+  const f = fixture({ client: { query: async (sql, values) => { queries.push({ sql, values }); return { rows }; } } });
+  for (let i = 0; i < 2; i += 1) {
+    const response = await invoke(f.handler, 'GET', '/material-requests');
+    assert.equal(response.status, 200);
+    const data = JSON.parse(response.body);
+    assert.equal(data.requests.length, 100);
+    assert.equal(data.limit, 100);
+    assert.equal(data.hasMore, true);
+    assert.equal(data.requests[0].request_id, '9007199254740993');
+    assert.equal(data.requests[0].created_at, '2026-10-22T10:00:00.000Z');
+  }
+  assert.equal(f.clients.length, 2);
+  for (const client of f.clients) {
+    assert.equal(client.closed, 1);
+    assert.equal(client.destroyed, 1);
+    assert.deepEqual(client.config.ssl, { rejectUnauthorized: true });
+  }
+  assert.deepEqual(queries[0], {
+    sql: 'SELECT request_id, material, quantity, plant, created_at FROM material_requests ORDER BY request_id DESC LIMIT $1',
+    values: [101],
+  });
+  assert.ok(f.requests.every((item) => item.name === 'GET /material-requests'));
+  assert.ok(f.dependencies.every((item) => item.name === 'PostgreSQL request listing'));
+  assert.equal(JSON.stringify([f.requests, f.dependencies]).includes('Wear plate'), false);
+  assert.equal((await invoke(f.handler, 'POST', '/material-requests')).status, 405);
+});
+
+test('an empty request list is distinguished from an unavailable database', async () => {
+  const f = fixture({ client: { query: async () => ({ rows: [] }) } });
+  assert.deepEqual(JSON.parse((await invoke(f.handler, 'GET', '/material-requests')).body), {
+    success: true, requests: [], limit: 100, hasMore: false,
+  });
+  const g = fixture({ client: { connect: async () => { throw secretError; } } });
+  const response = await invoke(g.handler, 'GET', '/material-requests');
+  assert.equal(response.status, 503);
+  assert.equal(JSON.parse(response.body).requests, undefined);
+  assert.match(JSON.parse(response.body).message, /could not be loaded/);
+  assert.equal(JSON.stringify([response, g.requests, g.dependencies]).includes(token), false);
+  assert.equal(g.clients[0].destroyed, 1);
+  assert.equal((await invoke(g.handler, 'GET', '/healthz')).status, 200);
+});
+
+test('request listing shares the bounded deadline and concurrency limit with checkout', async (t) => {
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  const f = fixture({ client: { connect: () => new Promise(() => {}) } });
+  const reads = Array.from({ length: 4 }, () => invoke(f.handler, 'GET', '/material-requests'));
+  assert.equal((await invoke(f.handler)).status, 503);
+  assert.equal(f.clients.length, 4);
+  assert.equal((await invoke(f.handler, 'GET', '/healthz')).status, 200);
+  t.mock.timers.tick(5000);
+  assert.ok((await Promise.all(reads)).every((response) => response.status === 503));
+  assert.ok(f.clients.every((client) => client.destroyed === 1));
+  assert.ok(f.dependencies.every((item) => item.properties.outcome === 'timeout'));
+});
+
+test('database-free request listing is explicitly unsupported rather than fabricated empty data', async () => {
+  const f = fixture({ handler: { env: { WORKLOAD_OPTION: 'app-service' } } });
+  const response = await invoke(f.handler, 'GET', '/material-requests');
+  assert.equal(response.status, 501);
+  assert.equal(JSON.parse(response.body).requests, undefined);
+  assert.equal(f.clients.length, 0);
+  assert.equal(f.dependencies.length, 0);
+});
+
+test('invalid database list results cannot be reported as successful reads', async () => {
+  const f = fixture({ client: { query: async () => ({ rows: null }) } });
+  const response = await invoke(f.handler, 'GET', '/material-requests');
+  assert.equal(response.status, 503);
+  assert.equal(f.dependencies[0].success, false);
+  assert.equal(f.requests[0].success, false);
+  assert.equal(f.clients[0].destroyed, 1);
+});
+
 test('input is trimmed and SQL-like text stays in bound values, never SQL or telemetry', async () => {
   const f = fixture();
   const material = "Plate'); DROP TABLE material_requests; --";

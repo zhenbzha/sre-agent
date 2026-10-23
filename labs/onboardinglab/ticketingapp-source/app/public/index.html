@@ -3,96 +3,115 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>SCM Material Requests</title>
+  <title>Metso | Material requests</title>
   <link rel="stylesheet" href="/styles.css">
   <script src="/app.js" defer></script>
 </head>
 <body>
-  <header class="app-header">
-    <nav class="header-content" aria-label="Main navigation">
-      <a class="brand" href="/" aria-label="SCM Material Requests home">
-        <svg viewBox="0 0 32 32" fill="none" aria-hidden="true">
-          <path d="m16 3 12 7v12l-12 7-12-7V10L16 3Z" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"/>
-          <path d="m4 10 12 7 12-7M16 17v12M10 6.5l12 7V19" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"/>
-        </svg>
-        <span>SCM<span class="brand-divider" aria-hidden="true">/</span><span class="brand-section">Supply operations</span></span>
-      </a>
-      <span class="workspace-label">Demo workspace</span>
+  <a class="skip-link" href="#main-content">Skip to content</a>
+  <aside class="sidebar">
+    <a class="brand" href="/" aria-label="Metso supply chain home">Metso</a>
+    <div class="workspace-name">Supply chain</div>
+    <nav aria-label="Workspace">
+      <button id="show-requests" type="button" class="nav-item" aria-current="page" aria-controls="requests-view">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 4h16v16H4zM4 9h16M9 9v11"/></svg>
+        Material requests
+      </button>
+      <button id="show-demo" type="button" class="nav-item" aria-controls="demo-view">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16M4 17h16M8 4v6M16 14v6"/></svg>
+        Demo controls
+      </button>
     </nav>
-  </header>
+    <div class="sidebar-footer"><span class="environment-dot"></span>Demo environment<span class="sidebar-note">Synthetic data, not production orders</span></div>
+  </aside>
 
-  <main>
-    <div class="page-heading">
-      <h1>Material requests</h1>
-      <p>Request materials for your plant.</p>
-    </div>
+  <div class="application">
+    <header class="topbar">
+      <div class="breadcrumb">Supply chain<span aria-hidden="true">/</span><span id="view-label">Material requests</span></div>
+      <span class="workspace-tag">Manufacturing</span>
+    </header>
 
-    <section class="request-workspace" aria-labelledby="request-title">
-      <form id="request-form" class="request-form">
-        <h2 id="request-title">New request</h2>
-        <div class="field">
-          <label for="material">Material</label>
-          <input id="material" name="material" maxlength="120" value="Steel plate" placeholder="Material name or part number" required>
-        </div>
-        <div class="field-row">
-          <div class="field">
-            <label for="quantity">Quantity <span class="label-hint">(units)</span></label>
-            <input id="quantity" name="quantity" type="number" inputmode="numeric" min="1" max="1000000" step="1" value="20" required>
-          </div>
-          <div class="field">
-            <label for="plant">Plant</label>
-            <input id="plant" name="plant" maxlength="80" value="Lyon" placeholder="Plant name" required>
-          </div>
-        </div>
-        <div class="form-actions">
-          <button id="checkout" type="submit" class="primary">Submit request</button>
-        </div>
-      </form>
-
-      <aside class="confirmation" aria-label="Request confirmation">
-        <div class="confirmation-content">
-          <svg class="document-icon" viewBox="0 0 40 40" fill="none" aria-hidden="true">
-            <path d="M12 6h12l6 6v22H10V6h2ZM23 6v8h7M16 21h8M16 27h8" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/>
-          </svg>
-          <p class="confirmation-label">Latest request</p>
-          <p id="result" role="status" aria-live="polite" aria-atomic="true">No request submitted</p>
-          <p id="receipt-detail">Your request number will appear here after saving.</p>
-        </div>
-      </aside>
-    </section>
-
-    <details class="demo-controls">
-      <summary>
-        <span>Demo controls</span>
-        <span id="loop" class="simulation-state" role="status">Idle</span>
-        <svg class="disclosure-icon" viewBox="0 0 16 16" fill="none" aria-hidden="true">
-          <path d="m5 6 3 3 3-3" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
-        </svg>
-      </summary>
-      <div class="demo-content">
-        <div class="simulation">
-          <h2>Request simulation</h2>
-          <p>Uses the current form values. Waits three seconds between requests and stops after ten minutes.</p>
-          <div class="simulation-actions">
-            <button id="start" type="button" class="secondary">Simulate material requests</button>
-            <button id="stop" type="button" class="secondary" disabled>Stop simulation</button>
-          </div>
-        </div>
-        <div class="diagnostics">
-          <dl class="counters" aria-label="Requests in this browser session">
-            <div><dt>Submitted</dt><dd id="attempts">0</dd></div>
-            <div><dt>Successful</dt><dd id="successes">0</dd></div>
-            <div><dt>Failed</dt><dd id="failures">0</dd></div>
-          </dl>
-          <p id="timing">No submissions this session.</p>
-          <div class="process-health">
-            <p id="health" role="status">Checking process health…</p>
-            <span>Process health does not verify database access.</span>
-          </div>
-        </div>
+    <main id="main-content">
+      <div id="feedback" class="notification" hidden>
+        <div><p id="result" role="status" aria-live="polite" aria-atomic="true"></p><p id="receipt-detail"></p></div>
+        <button id="dismiss-feedback" type="button" class="icon-button" aria-label="Dismiss notification">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m6 6 12 12M6 18 18 6"/></svg>
+        </button>
       </div>
-    </details>
-    <footer>Demo data only. No production orders.</footer>
-  </main>
+
+      <section id="requests-view" aria-labelledby="requests-title">
+        <div class="page-heading">
+          <div><div class="heading-line"><h1 id="requests-title">Material requests</h1><span id="request-count" class="count-label">Loading</span></div><p>Manage material requisitions across your plants.</p></div>
+          <button id="new-request" type="button" class="primary">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>New request
+          </button>
+        </div>
+
+        <div id="request-panel" class="request-panel" aria-busy="true">
+          <div class="table-toolbar">
+            <div class="search-field">
+              <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="10.5" cy="10.5" r="6.5"/><path d="m16 16 5 5"/></svg>
+              <label class="sr-only" for="search">Search saved requests</label>
+              <input id="search" type="search" placeholder="Search material or request ID" maxlength="120">
+            </div>
+            <div class="table-filters">
+              <label class="filter-label" for="plant-filter">Plant</label>
+              <select id="plant-filter"><option value="">All plants</option></select>
+              <label class="sr-only" for="sort">Sort requests</label>
+              <select id="sort"><option value="newest">Newest first</option><option value="oldest">Oldest first</option></select>
+              <button id="refresh" type="button" class="secondary">
+                <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20 7v5h-5M4 17v-5h5M6 7a7 7 0 0 1 12-1l2 3M4 15l2 3a7 7 0 0 0 12-1"/></svg>Refresh
+              </button>
+            </div>
+          </div>
+          <p id="list-error" class="list-error" role="alert" hidden></p>
+          <div class="table-scroll" tabindex="0" role="region" aria-label="Saved material requests">
+            <table>
+              <caption class="sr-only">Most recent saved requests. Creation times are displayed in your local timezone.</caption>
+              <thead><tr><th scope="col">Request ID</th><th scope="col">Material</th><th scope="col" class="numeric">Quantity</th><th scope="col">Plant</th><th scope="col">Created</th></tr></thead>
+              <tbody id="request-rows"><tr><td colspan="5" class="empty-state">Loading saved requests...</td></tr></tbody>
+            </table>
+          </div>
+          <div class="table-footer">
+            <span id="page-info" role="status">Loading requests...</span>
+            <div class="pagination"><button id="previous" type="button" class="secondary" disabled>Previous</button><button id="next" type="button" class="secondary" disabled>Next</button></div>
+          </div>
+        </div>
+        <div class="list-footnote"><span id="coverage">Times shown in your local timezone.</span><span id="updated"></span></div>
+      </section>
+
+      <section id="demo-view" aria-labelledby="demo-title" hidden>
+        <div class="page-heading"><div><h1 id="demo-title">Demo controls</h1><p>Generate material requests for the incident scenario.</p></div><span id="loop" class="simulation-state" role="status">Idle</span></div>
+        <div class="demo-grid">
+          <section class="control-panel" aria-labelledby="simulation-title">
+            <div class="panel-heading"><h2 id="simulation-title">Request simulation</h2><button id="configure-simulation" type="button" class="secondary">Edit values</button></div>
+            <dl class="simulation-values"><div><dt>Material</dt><dd id="sim-material">Steel plate</dd></div><div><dt>Quantity</dt><dd id="sim-quantity">20 units</dd></div><div><dt>Plant</dt><dd id="sim-plant">Lyon</dd></div></dl>
+            <p class="control-help">Waits three seconds between requests. Stops automatically after ten minutes.</p>
+            <div class="simulation-actions"><button id="start" type="button" class="primary">Start simulation</button><button id="stop" type="button" class="secondary" disabled>Stop simulation</button></div>
+          </section>
+          <section class="control-panel" aria-labelledby="activity-title">
+            <h2 id="activity-title">This browser session</h2>
+            <dl class="counters"><div><dt>Submitted</dt><dd id="attempts">0</dd></div><div><dt>Successful</dt><dd id="successes">0</dd></div><div><dt>Failed</dt><dd id="failures">0</dd></div></dl>
+            <p id="timing" class="control-help">No submissions this session.</p>
+            <div class="process-health"><p id="health" role="status">Checking process health...</p><p class="control-help">Process health does not verify database access.</p></div>
+          </section>
+        </div>
+      </section>
+      <noscript><p class="list-error">Enable JavaScript to view and submit material requests.</p></noscript>
+    </main>
+  </div>
+
+  <dialog id="request-dialog" aria-labelledby="dialog-title">
+    <div class="drawer-heading"><div><span class="drawer-context">Material requisition</span><h2 id="dialog-title">New material request</h2></div><button id="close-request" type="button" class="icon-button" aria-label="Close request form"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m6 6 12 12M6 18 18 6"/></svg></button></div>
+    <form id="request-form">
+      <div class="drawer-fields">
+        <div class="field"><label for="material">Material</label><input id="material" name="material" maxlength="120" value="Steel plate" placeholder="Material name or part number" required></div>
+        <div class="field"><label for="quantity">Quantity <span>(units)</span></label><input id="quantity" name="quantity" type="number" inputmode="numeric" min="1" max="1000000" step="1" value="20" required></div>
+        <div class="field"><label for="plant">Plant</label><input id="plant" name="plant" maxlength="80" value="Lyon" list="known-plants" placeholder="Plant name" required><datalist id="known-plants"></datalist></div>
+        <p id="form-status" role="status" aria-live="polite" hidden></p>
+      </div>
+      <div class="drawer-actions"><button id="cancel-request" type="button" class="secondary">Cancel</button><button id="checkout" type="submit" class="primary">Submit request</button></div>
+    </form>
+  </dialog>
 </body>
 </html>
