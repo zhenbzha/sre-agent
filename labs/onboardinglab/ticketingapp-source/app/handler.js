@@ -26,7 +26,7 @@ const assets = new Map([
 
 function readInput(request) {
   return new Promise((resolve, reject) => {
-    let body = '';
+    const chunks = [];
     let size = 0;
     const timer = setTimeout(() => finish(408, 'Request body timed out.'), 5000);
     function finish(status, message, value) {
@@ -43,25 +43,29 @@ function readInput(request) {
       }
     }
     function onData(chunk) {
-      size += Buffer.byteLength(chunk);
+      const bytes = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
+      size += bytes.length;
       if (size > MAX_BODY_BYTES) return finish(413, 'Request body is too large.');
-      body += chunk;
+      chunks.push(bytes);
     }
     function onError() { finish(400, 'Request body could not be read.'); }
     function onEnd() {
       let value;
-      try { value = JSON.parse(body); } catch { return finish(400, 'Send a valid JSON material request.'); }
+      try {
+        const body = new TextDecoder('utf-8', { fatal: true, ignoreBOM: true }).decode(Buffer.concat(chunks));
+        value = JSON.parse(body);
+      } catch { return finish(400, 'Send a valid UTF-8 JSON material request.'); }
       if (!value || typeof value !== 'object' || Array.isArray(value) ||
           Object.keys(value).some((key) => !['material', 'quantity', 'plant'].includes(key)) ||
           typeof value.material !== 'string' || !value.material.trim() || value.material.trim().length > 120 ||
           typeof value.plant !== 'string' || !value.plant.trim() || value.plant.trim().length > 80 ||
+          !value.material.isWellFormed() || !value.plant.isWellFormed() ||
           /[\u0000-\u001f\u007f]/.test(value.material + value.plant) ||
           !Number.isInteger(value.quantity) || value.quantity < 1 || value.quantity > 1000000) {
         return finish(400, 'Provide material (1-120 characters), quantity (1-1000000 whole units) and plant (1-80 characters).');
       }
       finish(0, '', { material: value.material.trim(), quantity: value.quantity, plant: value.plant.trim() });
     }
-    request.setEncoding('utf8');
     request.on('data', onData);
     request.on('end', onEnd);
     request.on('error', onError);

@@ -31,6 +31,7 @@ let successes = 0;
 let failures = 0;
 let activeRequest;
 let activeList;
+let activeHealth;
 
 function node(tag, text, className) {
   const element = document.createElement(tag);
@@ -40,6 +41,7 @@ function node(tag, text, className) {
 }
 
 function renderRequests() {
+  const firstLoad = loading && !loaded;
   const query = elements.search.value.trim().toLocaleLowerCase();
   const filtered = records.filter((record) =>
     (!elements['plant-filter'].value || record.plant === elements['plant-filter'].value) &&
@@ -71,9 +73,9 @@ function renderRequests() {
     const row = node('tr');
     const cell = node('td', undefined, 'empty-state');
     cell.colSpan = 5;
-    cell.append(node('strong', !loaded ? 'Requests unavailable' :
+    cell.append(node('strong', firstLoad ? 'Loading saved requests...' : !loaded ? 'Requests unavailable' :
       records.length ? 'No matching requests' : 'No requests yet'));
-    cell.append(node('div', !loaded ? 'Refresh the list to try again.' :
+    cell.append(node('div', firstLoad ? 'Waiting for the saved request list.' : !loaded ? 'Refresh the list to try again.' :
       records.length ? 'Try a different material, request ID, or plant.' : 'Create a material request to get started.'));
     if (loaded && records.length) {
       const clear = node('button', 'Clear filters', 'secondary');
@@ -90,8 +92,8 @@ function renderRequests() {
     rows.push(row);
   }
   elements['request-rows'].replaceChildren(...rows);
-  elements['request-count'].textContent = loaded ? records.length.toLocaleString() : 'Unavailable';
-  elements['page-info'].textContent = !loaded ? 'Not loaded' : filtered.length
+  elements['request-count'].textContent = loaded ? records.length.toLocaleString() : firstLoad ? 'Loading' : 'Unavailable';
+  elements['page-info'].textContent = firstLoad ? 'Loading requests...' : !loaded ? 'Not loaded' : filtered.length
     ? `${page * PAGE_SIZE + 1}-${Math.min((page + 1) * PAGE_SIZE, filtered.length)} of ${filtered.length} requests`
     : '0 matching requests';
   elements.previous.disabled = page === 0;
@@ -111,16 +113,20 @@ function validList(data) {
 }
 
 async function loadRequests() {
+  if (leaving) return;
   if (loading) { refreshQueued = true; return; }
   loading = true;
-  activeList = new AbortController();
+  const controller = new AbortController();
+  activeList = controller;
   elements.refresh.disabled = true;
   elements['request-panel'].setAttribute('aria-busy', 'true');
+  if (!loaded) renderRequests();
   try {
     const response = await fetch('/material-requests', {
-      signal: AbortSignal.any([activeList.signal, AbortSignal.timeout(7000)]),
+      signal: AbortSignal.any([controller.signal, AbortSignal.timeout(7000)]),
     });
     const data = await response.json();
+    if (controller.signal.aborted) return;
     if (!response.ok) throw new Error(typeof data.message === 'string' ? data.message : 'Saved requests could not be loaded.');
     if (!validList(data)) throw new Error('The server returned an unexpected request list. Try refreshing.');
     records = data.requests;
@@ -142,18 +148,17 @@ async function loadRequests() {
     elements['list-error'].hidden = true;
     elements.coverage.textContent = `${data.hasMore ? `Showing the latest ${data.limit} saved requests. ` : ''}Times shown in your local timezone.`;
     elements.updated.textContent = `Updated ${new Date().toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' })}`;
-    renderRequests();
   } catch (error) {
-    if (!leaving) {
+    if (!leaving && !controller.signal.aborted) {
       elements['list-error'].textContent = `${error.message || 'Saved requests could not be loaded.'}${loaded ? ' Showing the last loaded requests.' : ''}`;
       elements['list-error'].hidden = false;
-      renderRequests();
     }
   } finally {
     loading = false;
     activeList = undefined;
     elements.refresh.disabled = false;
     elements['request-panel'].setAttribute('aria-busy', 'false');
+    if (!leaving) renderRequests();
     if (refreshQueued && !leaving) { refreshQueued = false; void loadRequests(); }
   }
 }
@@ -213,19 +218,31 @@ function stopTraffic(message = 'Stopped') {
   clearTimeout(nextAttempt);
   clearTimeout(deadlineTimer);
   activeRequest?.abort();
+  activeHealth?.abort();
   elements.loop.textContent = message;
   updateButtons();
 }
 
 async function checkHealth() {
+  if (leaving) return;
+  activeHealth?.abort();
+  const controller = new AbortController();
+  activeHealth = controller;
   try {
-    const response = await fetch('/healthz', { signal: AbortSignal.timeout(7000) });
+    const response = await fetch('/healthz', {
+      signal: AbortSignal.any([controller.signal, AbortSignal.timeout(7000)]),
+    });
+    if (controller.signal.aborted) return;
     if (!response.ok) throw new Error('Unavailable');
     elements.health.textContent = 'Application is running';
     elements.health.dataset.state = 'success';
   } catch {
-    elements.health.textContent = 'Application unavailable';
-    elements.health.dataset.state = 'failure';
+    if (!leaving && !controller.signal.aborted) {
+      elements.health.textContent = 'Application unavailable';
+      elements.health.dataset.state = 'failure';
+    }
+  } finally {
+    if (activeHealth === controller) activeHealth = undefined;
   }
 }
 
@@ -234,7 +251,7 @@ function validForm() {
 }
 
 async function checkout() {
-  if (busy || !validForm()) return;
+  if (leaving || busy || !validForm()) return;
   const request = requestValues();
   const simulated = running;
   busy = true;
@@ -243,7 +260,8 @@ async function checkout() {
   setResult('Submitting material request...', 'pending');
   elements['receipt-detail'].textContent = `${request.material} · ${request.quantity.toLocaleString()} units · ${request.plant}`;
   const started = performance.now();
-  activeRequest = new AbortController();
+  const controller = new AbortController();
+  activeRequest = controller;
   attempts += 1;
   elements.attempts.textContent = attempts;
   let failureMessage;
@@ -252,7 +270,7 @@ async function checkout() {
     const response = await fetch('/checkout', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(request),
-      signal: AbortSignal.any([activeRequest.signal, AbortSignal.timeout(7000)]),
+      signal: AbortSignal.any([controller.signal, AbortSignal.timeout(7000)]),
     });
     const data = await response.json();
     if (!response.ok || data.success !== true) {
@@ -270,7 +288,7 @@ async function checkout() {
     if (!simulated) {
       elements['request-dialog'].close();
       page = 0;
-      void loadRequests();
+      if (!controller.signal.aborted) void loadRequests();
     }
   } catch {
     failures += 1;
@@ -283,7 +301,7 @@ async function checkout() {
     elements.timing.textContent = `Latest attempt: ${Math.round(performance.now() - started)} ms · ${new Date().toLocaleTimeString()}`;
     updateButtons();
     if (saved && !simulated) elements['new-request'].focus();
-    if (!leaving) void checkHealth();
+    if (!controller.signal.aborted && (!simulated || running)) void checkHealth();
   }
 }
 
@@ -324,7 +342,7 @@ elements['request-form'].addEventListener('submit', (event) => {
   return checkout();
 });
 elements.start.addEventListener('click', () => {
-  if (busy || running || !validForm()) return;
+  if (leaving || busy || running || !validForm()) return;
   running = true;
   deadline = Date.now() + 10 * 60 * 1000;
   deadlineTimer = setTimeout(() => stopTraffic('Finished after 10 minutes'), 10 * 60 * 1000);
@@ -339,6 +357,17 @@ for (const [id, event] of [['search', 'input'], ['plant-filter', 'change'], ['so
 }
 elements.previous.addEventListener('click', () => { page = Math.max(0, page - 1); renderRequests(); });
 elements.next.addEventListener('click', () => { page += 1; renderRequests(); });
-window.addEventListener('pagehide', () => { leaving = true; stopTraffic(); activeList?.abort(); });
+window.addEventListener('pagehide', () => {
+  leaving = true;
+  refreshQueued = false;
+  stopTraffic();
+  activeList?.abort();
+});
+window.addEventListener('pageshow', (event) => {
+  if (!event.persisted) return;
+  leaving = false;
+  void checkHealth();
+  void loadRequests();
+});
 void checkHealth();
 void loadRequests();

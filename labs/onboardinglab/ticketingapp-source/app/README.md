@@ -75,8 +75,10 @@ Known paths with other methods return 405 with `Allow`; unknown paths return
 ```
 
 Material and plant are trimmed nonempty strings (maximum 120 and 80 characters);
-control characters and extra fields are rejected. Quantity must be an integer
-from 1 to 1,000,000. The body is limited to 2 KiB and five seconds. Invalid bodies
+control characters, unpaired Unicode surrogates and extra fields are rejected.
+The JSON body must be valid UTF-8; invalid bytes are rejected rather than silently
+replaced in saved material or plant names. Quantity must be an integer
+from 1 to 1,000,000. The body is limited to 2 KiB of raw bytes and five seconds. Invalid bodies
 produce explicit 400/408/413/415 responses without a database connection.
 The database-free `app-service` option retains simulated success but explicitly
 says it did not save anything and does not invent a request number.
@@ -126,7 +128,9 @@ system fonts and a text wordmark; no external assets or UI libraries are loaded.
 or Enter; the confirmation displays the exact database-generated request number
 and refreshes the list. Failed submissions remain explicit and do not imply that
 retrying is safe. Failed refreshes retain any previously loaded rows with a stale
-data warning, rather than presenting an empty list as current data.
+data warning, rather than presenting an empty list as current data. Changing
+filters during the initial read retains the loading state, not an unavailable or
+empty state.
 
 **Demo controls** is a separate navigation view for traffic simulation, session
 counters, response timing and process health. **Edit values** configures the
@@ -142,8 +146,11 @@ fabricate saved requests. `/healthz` and startup remain database-independent.
 
 Manual checkout makes one request. The traffic loop waits for each request to
 finish, then waits three seconds; it automatically stops at ten minutes. Stop
-aborts the browser request and prevents subsequent attempts; already-started
-server work can run until its five-second deadline. No traffic starts on load.
+aborts the browser request and any in-flight process-health check, and prevents
+subsequent attempts or follow-up health reads from that attempt; already-started
+server work can run until its five-second deadline. Leaving the page also aborts
+the list read. Returning through browser history refreshes read-only state without
+restarting simulation or replaying a submission. No POST traffic starts on load.
 
 Supply this folder as the source app to the parent azd integration. Runtime start
 command is `npm start`; production dependencies must be installed on Linux during

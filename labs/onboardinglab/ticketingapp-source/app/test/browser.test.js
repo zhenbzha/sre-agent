@@ -6,7 +6,7 @@ const { readFileSync } = require('node:fs');
 const { join } = require('node:path');
 const { runInNewContext } = require('node:vm');
 
-function browser(success = true, fetchCheckout, fetchList) {
+function browser(success = true, fetchCheckout, fetchList, fetchHealth) {
   const elements = {};
   const calls = [];
   const timers = new Map();
@@ -33,10 +33,11 @@ function browser(success = true, fetchCheckout, fetchList) {
     window: { addEventListener(event, callback) { events[event] = callback; } },
     fetch: async (url, options) => {
       calls.push({ url, options });
-      if (url === '/material-requests') return fetchList ? fetchList() : {
+      if (url === '/material-requests') return fetchList ? fetchList(options) : {
         ok: true, json: async () => ({ success: true, requests: [], limit: 100, hasMore: false }),
       };
       if (url === '/checkout' && fetchCheckout) return fetchCheckout(options);
+      if (url === '/healthz' && fetchHealth) return fetchHealth(options);
       return { ok: url === '/healthz' || success, json: async () => success
         ? { success: true, requestId: '9007199254740993', message: 'Request saved' }
         : { success: false, message: 'Database unavailable.' } };
@@ -312,4 +313,117 @@ test('an invalid generated request number is not displayed as a confirmed save',
   assert.equal(f.elements.result.dataset.state, 'failure');
   assert.equal(f.elements.successes.textContent, 0);
   assert.match(f.elements.result.textContent, /could not be confirmed/);
+});
+
+test('filtering while the first read is pending preserves the loading state', async () => {
+  let finish;
+  const f = browser(true, undefined, () => new Promise((resolve) => { finish = resolve; }));
+  f.elements.search.value = 'Wear plate';
+  f.elements.search.input();
+  assert.equal(f.elements['request-count'].textContent, 'Loading');
+  assert.equal(f.elements['page-info'].textContent, 'Loading requests...');
+  assert.equal(f.elements['request-rows'].children[0].children[0].children[0].textContent, 'Loading saved requests...');
+  finish({ ok: false, json: async () => ({ message: 'Saved requests could not be loaded.' }) });
+  await new Promise(setImmediate);
+  assert.equal(f.elements['request-count'].textContent, 'Unavailable');
+  assert.equal(f.elements['request-rows'].children[0].children[0].children[0].textContent, 'Requests unavailable');
+});
+
+test('stopping an outstanding simulation aborts it without starting a follow-up health request', async () => {
+  const f = browser(true, ({ signal }) => new Promise((resolve, reject) => {
+    signal.addEventListener('abort', () => reject(signal.reason), { once: true });
+  }));
+  await new Promise(setImmediate);
+  f.elements.start.click();
+  const countAtStop = f.calls.length;
+  f.elements.stop.click();
+  await new Promise(setImmediate);
+  assert.equal(f.calls.length, countAtStop);
+  assert.equal(f.calls.find(({ url }) => url === '/checkout').options.signal.aborted, true);
+  assert.equal(f.timers.size, 0);
+  assert.equal(f.elements.checkout.disabled, false);
+  assert.match(f.elements.result.textContent, /could not be confirmed/);
+});
+
+test('Stop aborts an in-flight health read and cancellation is not reported as an outage', async () => {
+  let healthReads = 0;
+  const f = browser(true, undefined, undefined, ({ signal }) => ++healthReads === 1
+    ? Promise.resolve({ ok: true })
+    : new Promise((resolve, reject) => {
+      signal.addEventListener('abort', () => reject(signal.reason), { once: true });
+    }));
+  await new Promise(setImmediate);
+  f.elements.start.click();
+  await new Promise(setImmediate);
+  const health = f.calls.filter(({ url }) => url === '/healthz').at(-1);
+  f.elements.stop.click();
+  await new Promise(setImmediate);
+  assert.equal(health.options.signal.aborted, true);
+  assert.equal(f.elements.health.textContent, 'Application is running');
+});
+
+test('a late successful save after pagehide keeps its receipt but starts no new reads', async () => {
+  let finish;
+  const f = browser(true, () => new Promise((resolve) => { finish = resolve; }));
+  await new Promise(setImmediate);
+  const pending = submit(f);
+  const countAtLeave = f.calls.length;
+  f.events.pagehide();
+  finish({ ok: true, json: async () => ({ success: true, requestId: '42' }) });
+  await pending;
+  assert.equal(f.elements.result.textContent, 'Request saved #42');
+  assert.equal(f.calls.length, countAtLeave);
+  assert.equal(f.timers.size, 0);
+});
+
+test('history restoration resumes read-only state, not the simulation, and reports stale refreshes', async () => {
+  let reads = 0;
+  const f = browser(true, undefined, async () => ++reads === 1
+    ? listResponse([record(42)])
+    : { ok: false, json: async () => ({ message: 'Saved requests could not be loaded.' }) });
+  await new Promise(setImmediate);
+  f.elements.start.click();
+  await new Promise(setImmediate);
+  f.events.pagehide();
+  f.events.pageshow({ persisted: true });
+  await new Promise(setImmediate);
+  assert.equal(reads, 2);
+  assert.equal(f.elements.loop.textContent, 'Stopped');
+  assert.equal(f.calls.filter(({ url }) => url === '/checkout').length, 1);
+  assert.equal(f.timers.size, 0);
+  assert.equal(f.elements['list-error'].hidden, false);
+  assert.match(f.elements['list-error'].textContent, /Showing the last loaded requests/);
+  assert.equal(f.elements['request-rows'].children[0].children[0].textContent, '#42');
+});
+
+test('history restoration ignores the aborted list snapshot and drains a queued fresh read', async () => {
+  let finishFirst;
+  let reads = 0;
+  const f = browser(true, undefined, () => ++reads === 1
+    ? new Promise((resolve) => { finishFirst = resolve; })
+    : Promise.resolve(listResponse([record(43)])));
+  f.events.pagehide();
+  assert.equal(f.calls.find(({ url }) => url === '/material-requests').options.signal.aborted, true);
+  f.events.pageshow({ persisted: true });
+  assert.equal(reads, 1);
+  finishFirst(listResponse([record(42)]));
+  await new Promise(setImmediate);
+  assert.equal(reads, 2);
+  assert.equal(f.elements['request-rows'].children[0].children[0].textContent, '#43');
+  assert.equal(f.elements['list-error'].hidden, true);
+  assert.equal(f.calls.filter(({ url }) => url === '/checkout').length, 0);
+});
+
+test('a superseded health response cannot overwrite the newest process health', async () => {
+  let finishFirst;
+  let reads = 0;
+  const f = browser(true, undefined, undefined, () => ++reads === 1
+    ? new Promise((resolve) => { finishFirst = resolve; })
+    : Promise.resolve({ ok: true }));
+  await submit(f);
+  await new Promise(setImmediate);
+  assert.equal(f.calls.find(({ url }) => url === '/healthz').options.signal.aborted, true);
+  finishFirst({ ok: false });
+  await new Promise(setImmediate);
+  assert.equal(f.elements.health.textContent, 'Application is running');
 });

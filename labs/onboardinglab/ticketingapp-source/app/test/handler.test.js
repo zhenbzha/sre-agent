@@ -61,7 +61,7 @@ async function invoke(handler, method = 'POST', url = '/checkout', body = JSON.s
     method, url, headers: { 'content-type': contentType }, resume() {}, setEncoding() {},
   });
   const pending = handler(request, response);
-  request.emit('data', body);
+  for (const chunk of Array.isArray(body) ? body : [body]) request.emit('data', chunk);
   request.emit('end');
   await pending;
   return response;
@@ -221,6 +221,40 @@ test('malformed, oversized and non-JSON bodies fail clearly without database cal
   assert.equal((await invoke(f.handler, 'POST', '/checkout', 'x'.repeat(2049))).status, 413);
   assert.equal((await invoke(f.handler, 'POST', '/checkout', '{}', 'text/plain')).status, 415);
   assert.equal(f.clients.length, 0);
+});
+
+test('invalid Unicode is rejected rather than silently changing the saved material or plant', async () => {
+  const f = fixture();
+  const invalidUtf8 = Buffer.concat([
+    Buffer.from('{"material":"'), Buffer.from([0xc3, 0x28]),
+    Buffer.from('","quantity":1,"plant":"Lyon"}'),
+  ]);
+  for (const body of [
+    invalidUtf8,
+    JSON.stringify({ ...materialRequest, material: '\ud800' }),
+    JSON.stringify({ ...materialRequest, plant: '\udc00' }),
+  ]) {
+    assert.equal((await invoke(f.handler, 'POST', '/checkout', body)).status, 400);
+  }
+  assert.equal(f.clients.length, 0);
+  const material = 'Pièce 🔩';
+  const response = await invoke(f.handler, 'POST', '/checkout',
+    Buffer.from(JSON.stringify({ ...materialRequest, material })));
+  assert.equal(response.status, 200);
+  assert.equal(f.clients[0].queries[0].values[0], material);
+});
+
+test('UTF-8 characters split across chunks and the exact byte limit are handled without data loss', async () => {
+  const f = fixture();
+  const material = 'Pièce 🔩';
+  const bytes = Buffer.from(JSON.stringify({ ...materialRequest, material }));
+  const chunks = Array.from(bytes, (byte) => Buffer.from([byte]));
+  chunks.push(Buffer.alloc(2048 - bytes.length, ' '));
+  assert.equal((await invoke(f.handler, 'POST', '/checkout', chunks)).status, 200);
+  assert.equal(f.clients[0].queries[0].values[0], material);
+  chunks.push(Buffer.from(' '));
+  assert.equal((await invoke(f.handler, 'POST', '/checkout', chunks)).status, 413);
+  assert.equal(f.clients.length, 1);
 });
 
 test('missing database-generated number is not reported as saved', async () => {
