@@ -697,7 +697,7 @@ The agent identities use Azure RBAC for resource and telemetry access. The agent
    ./scripts/fault.ps1 inject -Subscription $Subscription -ResourceGroup 'YOUR-LAB-RESOURCE-GROUP'
    ```
 
-2. In the ticketing application, select **Launch on-sale simulation**.
+2. In SCM Material Requests, open **Demo controls** and select **Start simulation**.
 3. Confirm that material request submissions fail while the service health check remains available.
 
 **Observe the incident workflow**
@@ -712,6 +712,20 @@ Allow time for telemetry ingestion, the five-minute alert evaluation, and the ne
 4. Review any optional GitHub issue or Outlook email proposal before approving it.
 
 The `alert-investigation` response plan routes the alert to the `alert-investigator` subagent in Review mode. The subagent correlates app telemetry, Azure configuration, Activity Log, and available source evidence, then recommends the operator-owned reset.
+
+**Optional Foundry IQ document lookup**
+
+The [SCM knowledge component](knowledge/README.md) adds a synthetic PDF handbook
+to a dedicated Azure AI Search knowledge base, with native Foundry IQ MCP
+retrieval. Provision and connect that component only when it is part of your
+approved demo scope. It uses azd and Azure Verified Modules without redeploying
+the application or database.
+
+When installed, the existing incident investigator retrieves relevant handbook
+sections during this same scenario. Show the completed **Knowledge Base
+Retrieve** tool card and compare its guidance with the live incident evidence.
+The handbook is context, not proof of a cause or authorization to act. No new
+conversational agent, handoff, or ticket workflow is introduced.
 
 **Recover and verify**
 

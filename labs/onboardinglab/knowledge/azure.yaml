@@ -1,0 +1,5 @@
+# yaml-language-server: $schema=https://aka.ms/azure.yaml.json
+name: onboardinglab-knowledge
+infra:
+  provider: bicep
+  path: infra
