@@ -186,6 +186,117 @@ test('invalid database list results cannot be reported as successful reads', asy
   assert.equal(f.clients[0].destroyed, 1);
 });
 
+test('deletion binds one exact bigint ID, uses fresh TLS clients and emits separate sanitized telemetry', async () => {
+  const requestId = '9007199254740993';
+  const queries = [];
+  const f = fixture({ client: {
+    query: async (sql, values) => { queries.push({ sql, values }); return { rows: [{ request_id: requestId }] }; },
+  } });
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    const response = await invoke(f.handler, 'DELETE', `/material-requests/${requestId}?secret=${token}`);
+    assert.equal(response.status, 200);
+    assert.deepEqual(JSON.parse(response.body), { success: true, requestId, message: 'Request deleted' });
+  }
+  assert.equal(f.clients.length, 2);
+  assert.notEqual(f.clients[0], f.clients[1]);
+  for (const client of f.clients) {
+    assert.equal(client.closed, 1);
+    assert.equal(client.destroyed, 1);
+    assert.deepEqual(client.config.ssl, { rejectUnauthorized: true });
+  }
+  assert.deepEqual(queries, Array(2).fill({
+    sql: 'DELETE FROM material_requests WHERE request_id = $1 RETURNING request_id',
+    values: [requestId],
+  }));
+  assert.ok(f.requests.every((item) => item.name === 'DELETE /material-requests/:requestId' &&
+    item.properties['http.method'] === 'DELETE' && item.success));
+  assert.ok(f.dependencies.every((item) => item.name === 'PostgreSQL request deletion' && item.success));
+  for (const value of [requestId, token, env.POSTGRES_HOST]) {
+    assert.equal(JSON.stringify([f.requests, f.dependencies]).includes(value), false);
+  }
+});
+
+test('deletion rejects invalid IDs and other HTTP methods without touching PostgreSQL', async () => {
+  const f = fixture();
+  for (const id of ['0', '-1', '01', '1.5', '1e2', 'abc', '%31', '42%20OR%201=1',
+    '9223372036854775808', '9'.repeat(100)]) {
+    assert.equal((await invoke(f.handler, 'DELETE', `/material-requests/${id}`)).status, 400, id);
+  }
+  for (const method of ['GET', 'POST', 'PUT', 'OPTIONS', 'HEAD']) {
+    const response = await invoke(f.handler, method, '/material-requests/42');
+    assert.equal(response.status, 405);
+    assert.equal(response.headers.Allow, 'DELETE');
+  }
+  for (const path of ['/material-requests/', '/material-requests/42/extra']) {
+    assert.equal((await invoke(f.handler, 'DELETE', path)).status, 404);
+  }
+  assert.equal((await invoke(f.handler, 'DELETE', '/material-requests')).status, 405);
+  assert.equal(f.clients.length, 0);
+  assert.equal(f.dependencies.length, 0);
+  assert.ok(f.requests.every((item) => item.properties.outcome === 'invalid-input'));
+});
+
+test('a missing row returns 404 while a malformed deletion result cannot be reported as successful', async () => {
+  const f = fixture({ client: { query: async () => ({ rows: [] }) } });
+  const response = await invoke(f.handler, 'DELETE', '/material-requests/42');
+  assert.equal(response.status, 404);
+  assert.equal(JSON.parse(response.body).success, false);
+  assert.match(JSON.parse(response.body).message, /already have been deleted/);
+  assert.equal(f.dependencies[0].success, true, 'An empty result is a successful query, not a database outage');
+  assert.equal(f.requests[0].properties.outcome, 'not-found');
+  for (const rows of [null, [{}], [{ request_id: '43' }], [{ request_id: 42 }], [{ request_id: '42' }, { request_id: '43' }]]) {
+    const invalid = fixture({ client: { query: async () => ({ rows }) } });
+    assert.equal((await invoke(invalid.handler, 'DELETE', '/material-requests/42')).status, 503);
+    assert.equal(invalid.dependencies[0].success, false);
+    assert.equal(invalid.clients[0].destroyed, 1);
+  }
+});
+
+test('deletion failures remain uncertain, sanitized and independent of process health', async () => {
+  for (const phase of ['connect', 'query']) {
+    const f = fixture({ client: { [phase]: async () => { throw secretError; } } });
+    const response = await invoke(f.handler, 'DELETE', '/material-requests/42');
+    assert.equal(response.status, 503);
+    assert.match(JSON.parse(response.body).message, /could not be confirmed.*check the outcome/);
+    assert.equal(response.headers['Retry-After'], '3');
+    assert.equal(f.clients[0].closed, 1);
+    assert.equal(f.clients[0].destroyed, 1);
+    assert.equal((await invoke(f.handler, 'GET', '/healthz')).status, 200);
+    for (const value of [token, env.POSTGRES_HOST, 'ECONNREFUSED']) {
+      assert.equal(JSON.stringify([response, f.requests, f.dependencies]).includes(value), false);
+    }
+  }
+});
+
+test('deletion shares the four-attempt budget and five-second timeout with submissions and lists', async (t) => {
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  const f = fixture({ client: { connect: () => new Promise(() => {}) } });
+  const pending = Array.from({ length: 4 }, () => invoke(f.handler, 'DELETE', '/material-requests/42'));
+  for (const [method, path] of [['POST', '/checkout'], ['GET', '/material-requests'], ['DELETE', '/material-requests/42']]) {
+    assert.equal((await invoke(f.handler, method, path)).status, 503);
+  }
+  assert.equal(f.clients.length, 4);
+  assert.equal((await invoke(f.handler, 'GET', '/healthz')).status, 200);
+  t.mock.timers.tick(5000);
+  assert.ok((await Promise.all(pending)).every((response) => response.status === 503));
+  assert.ok(f.clients.every((client) => client.destroyed === 1));
+  assert.ok(f.dependencies.every((item) => item.properties.outcome === 'timeout'));
+  const next = invoke(f.handler, 'DELETE', '/material-requests/42');
+  assert.equal(f.clients.length, 5, 'Timed-out deletion releases its concurrency slot');
+  t.mock.timers.tick(5000);
+  await next;
+});
+
+test('deletion never simulates success without a configured PostgreSQL workload', async () => {
+  for (const [settings, status] of [[{ WORKLOAD_OPTION: 'app-service' }, 501], [{ WORKLOAD_OPTION: 'unknown' }, 503], [{}, 503]]) {
+    const f = fixture({ handler: { env: settings } });
+    const response = await invoke(f.handler, 'DELETE', '/material-requests/42');
+    assert.equal(response.status, status);
+    assert.equal(JSON.parse(response.body).success, false);
+    assert.equal(f.clients.length, 0);
+  }
+});
+
 test('input is trimmed and SQL-like text stays in bound values, never SQL or telemetry', async () => {
   const f = fixture();
   const material = "Plate'); DROP TABLE material_requests; --";

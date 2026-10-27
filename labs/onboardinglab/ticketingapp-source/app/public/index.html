@@ -68,8 +68,8 @@
           <div class="table-scroll" tabindex="0" role="region" aria-label="Saved material requests">
             <table>
               <caption class="sr-only">Most recent saved requests. Creation times are displayed in your local timezone.</caption>
-              <thead><tr><th scope="col">Request ID</th><th scope="col">Material</th><th scope="col" class="numeric">Quantity</th><th scope="col">Plant</th><th scope="col">Created</th></tr></thead>
-              <tbody id="request-rows"><tr><td colspan="5" class="empty-state">Loading saved requests...</td></tr></tbody>
+              <thead><tr><th scope="col">Request ID</th><th scope="col">Material</th><th scope="col" class="numeric">Quantity</th><th scope="col">Plant</th><th scope="col">Created</th><th scope="col" class="actions-cell">Actions</th></tr></thead>
+              <tbody id="request-rows"><tr><td colspan="6" class="empty-state">Loading saved requests...</td></tr></tbody>
             </table>
           </div>
           <div class="table-footer">
@@ -107,11 +107,27 @@
       <div class="drawer-fields">
         <div class="field"><label for="material">Material</label><input id="material" name="material" maxlength="120" value="Steel plate" placeholder="Material name or part number" required></div>
         <div class="field"><label for="quantity">Quantity <span>(units)</span></label><input id="quantity" name="quantity" type="number" inputmode="numeric" min="1" max="1000000" step="1" value="20" required></div>
-        <div class="field"><label for="plant">Plant</label><input id="plant" name="plant" maxlength="80" value="Tampere" list="known-plants" placeholder="Plant name" required><datalist id="known-plants"></datalist></div>
+        <div class="field">
+          <label for="plant">Plant</label>
+          <select id="plant" name="plant" required>
+            <option value="Tampere" selected>Tampere</option>
+            <option value="Helsinki">Helsinki</option>
+            <option value="Turku">Turku</option>
+          </select>
+        </div>
         <p id="form-status" role="status" aria-live="polite" hidden></p>
       </div>
       <div class="drawer-actions"><button id="cancel-request" type="button" class="secondary">Cancel</button><button id="checkout" type="submit" class="primary">Submit request</button></div>
     </form>
+  </dialog>
+
+  <dialog id="delete-dialog" class="confirmation-dialog" aria-labelledby="delete-title" aria-describedby="delete-description delete-warning">
+    <div class="confirmation-content">
+      <h2 id="delete-title">Delete material request?</h2>
+      <p id="delete-description"></p>
+      <p id="delete-warning">This permanently deletes the saved request. This cannot be undone.</p>
+    </div>
+    <div class="drawer-actions"><button id="cancel-delete" type="button" class="secondary" autofocus>Cancel</button><button id="confirm-delete" type="button" class="danger">Delete request</button></div>
   </dialog>
 </body>
 </html>

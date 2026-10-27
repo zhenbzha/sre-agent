@@ -24,6 +24,9 @@ button:disabled { opacity: .45; cursor: not-allowed; }
 .secondary:hover:not(:disabled) { background: #edf2ef; border-color: #a6b4ac; }
 .icon-button { width: 40px; padding: 8px; color: #5c6761; background: transparent; }
 .icon-button:hover:not(:disabled) { background: #eaf0ec; }
+.delete-request:hover:not(:disabled) { color: #963a2a; background: #fff0ec; }
+.danger { color: #fff; background: #a93627; border-color: #a93627; }
+.danger:hover:not(:disabled) { background: #89291d; border-color: #89291d; }
 :where(button, input, select, a, .table-scroll):focus-visible { outline: 3px solid #006e56; outline-offset: 3px; }
 .sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; border: 0; }
 .skip-link { position: fixed; top: -80px; left: 12px; z-index: 10; padding: 12px; background: #fff; color: var(--ink); }
@@ -63,7 +66,7 @@ input, select { height: 40px; min-width: 0; border: 1px solid #becac2; border-ra
 input { padding: 10px 12px; }
 input::placeholder { color: #77847b; }
 input:hover:not(:disabled), select:hover:not(:disabled) { border-color: #83988a; }
-input:disabled { background: #f3f6f4; color: var(--muted); }
+input:disabled, select:disabled { background: #f3f6f4; color: var(--muted); }
 .search-field input { width: 100%; padding-left: 39px; }
 select { max-width: 200px; padding: 8px 30px 8px 11px; }
 .table-filters { display: flex; align-items: center; flex-wrap: wrap; gap: 10px; }
@@ -75,7 +78,8 @@ td { height: 58px; padding: 12px 22px; border-bottom: 1px solid #e9eeeb; font-si
 th:first-child { width: 155px; }
 th:nth-child(3) { width: 115px; }
 th:nth-child(4) { width: 180px; }
-th:last-child { width: 195px; }
+th:nth-child(5) { width: 195px; }
+.actions-cell { width: 64px; padding-inline: 12px; text-align: center; }
 tbody tr:last-child td { border-bottom: 0; }
 tbody tr:hover:not(:has(.empty-state)) { background: #f8faf9; }
 .request-id { color: #244d3b; font-weight: 600; font-variant-numeric: tabular-nums; white-space: nowrap; }
@@ -103,6 +107,10 @@ tbody tr:hover:not(:has(.empty-state)) { background: #f8faf9; }
 dialog { position: fixed; inset: 0 0 0 auto; width: 480px; max-width: 100%; height: 100dvh; max-height: 100dvh; margin: 0; padding: 0; border: 0; border-left: 1px solid var(--border); background: #fff; color: inherit; box-shadow: -12px 0 40px rgb(9 9 9 / 12%); }
 dialog[open] { display: flex; flex-direction: column; }
 dialog::backdrop { background: rgb(9 18 12 / 35%); }
+.confirmation-dialog { inset: 0; width: 440px; max-width: calc(100% - 32px); height: fit-content; max-height: calc(100dvh - 32px); margin: auto; border: 1px solid var(--border); border-radius: 6px; box-shadow: 0 16px 48px rgb(9 9 9 / 18%); }
+.confirmation-content { padding: 26px 28px; overflow: auto; }
+.confirmation-content p { margin: 16px 0 0; font-size: 13px; line-height: 1.7; overflow-wrap: anywhere; }
+#delete-warning { color: var(--muted); }
 .drawer-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; padding: 28px; border-bottom: 1px solid var(--border); }
 .drawer-context { display: block; margin-bottom: 8px; color: var(--muted); font-size: 12px; }
 .drawer-heading h2 { font-size: 23px; font-weight: 500; letter-spacing: -.025em; }
@@ -111,7 +119,8 @@ dialog::backdrop { background: rgb(9 18 12 / 35%); }
 .field + .field { margin-top: 26px; }
 .field label { display: block; margin-bottom: 10px; font-size: 13px; font-weight: 600; }
 .field label span { color: var(--muted); font-weight: 400; }
-.field input { width: 100%; height: 46px; font-size: 14px; }
+.field input, .field select { width: 100%; max-width: none; height: 46px; font-size: 14px; }
+.field select { color-scheme: light; }
 .drawer-actions { display: flex; flex-shrink: 0; justify-content: flex-end; gap: 10px; padding: 22px 28px; border-top: 1px solid var(--border); background: #fafcfb; }
 #form-status { padding: 14px; margin: 28px 0 0; background: #f0f6f2; color: #355641; font-size: 13px; line-height: 1.7; overflow-wrap: anywhere; }
 #form-status[data-state="failure"] { color: #963a2a; background: #fff3ee; }

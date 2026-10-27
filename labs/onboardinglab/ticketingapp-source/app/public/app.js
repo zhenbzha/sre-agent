@@ -8,8 +8,9 @@ const elements = Object.fromEntries([
   'configure-simulation', 'sim-material', 'sim-quantity', 'sim-plant',
   'show-requests', 'show-demo', 'requests-view', 'demo-view', 'view-label',
   'request-panel', 'request-rows', 'request-count', 'list-error', 'search',
-  'plant-filter', 'known-plants', 'sort', 'refresh', 'page-info', 'previous', 'next',
+  'plant-filter', 'sort', 'refresh', 'page-info', 'previous', 'next',
   'coverage', 'updated',
+  'delete-dialog', 'delete-title', 'delete-description', 'cancel-delete', 'confirm-delete',
 ].map((id) => [id, document.getElementById(id)]));
 const PAGE_SIZE = 10;
 let records = [];
@@ -32,6 +33,10 @@ let failures = 0;
 let activeRequest;
 let activeList;
 let activeHealth;
+let pendingDeletion;
+let deleting = false;
+let activeDeletion;
+let deleteButtons = [];
 
 function node(tag, text, className) {
   const element = document.createElement(tag);
@@ -51,6 +56,7 @@ function renderRequests() {
     (BigInt(a.request_id) > BigInt(b.request_id) ? 1 : BigInt(a.request_id) < BigInt(b.request_id) ? -1 : 0)));
   page = Math.min(page, Math.max(0, Math.ceil(filtered.length / PAGE_SIZE) - 1));
   const visible = filtered.slice(page * PAGE_SIZE, (page + 1) * PAGE_SIZE);
+  deleteButtons = [];
   const rows = visible.map((record) => {
     const row = node('tr');
     if (record.request_id === lastSavedId) row.className = 'new-row';
@@ -64,15 +70,32 @@ function renderRequests() {
     time.append(node('span', date.toLocaleDateString(undefined, { day: '2-digit', month: 'short', year: 'numeric' })),
       node('span', date.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' }), 'created-time'));
     created.append(time);
+    const actions = node('td', undefined, 'actions-cell');
+    const remove = node('button', undefined, 'icon-button delete-request');
+    remove.type = 'button';
+    remove.title = `Delete request #${record.request_id}`;
+    remove.setAttribute('aria-label', remove.title);
+    remove.dataset.requestId = record.request_id;
+    remove.disabled = busy || running || deleting || loading;
+    const icon = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+    icon.setAttribute('viewBox', '0 0 24 24');
+    icon.setAttribute('aria-hidden', 'true');
+    const path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+    path.setAttribute('d', 'M3 6h18M9 6V3h6v3M5 6l1 15h12l1-15M10 10v7M14 10v7');
+    icon.append(path);
+    remove.append(icon);
+    remove.addEventListener('click', () => openDelete(record));
+    deleteButtons.push(remove);
+    actions.append(remove);
     row.append(node('td', `#${record.request_id}`, 'request-id'),
       node('td', record.material, 'material-cell'),
-      node('td', record.quantity.toLocaleString(), 'numeric'), plant, created);
+      node('td', record.quantity.toLocaleString(), 'numeric'), plant, created, actions);
     return row;
   });
   if (!rows.length) {
     const row = node('tr');
     const cell = node('td', undefined, 'empty-state');
-    cell.colSpan = 5;
+    cell.colSpan = 6;
     cell.append(node('strong', firstLoad ? 'Loading saved requests...' : !loaded ? 'Requests unavailable' :
       records.length ? 'No matching requests' : 'No requests yet'));
     cell.append(node('div', firstLoad ? 'Waiting for the saved request list.' : !loaded ? 'Refresh the list to try again.' :
@@ -114,11 +137,12 @@ function validList(data) {
 
 async function loadRequests() {
   if (leaving) return;
-  if (loading) { refreshQueued = true; return; }
+  if (loading || deleting) { refreshQueued = true; return; }
+  refreshQueued = false;
   loading = true;
   const controller = new AbortController();
   activeList = controller;
-  elements.refresh.disabled = true;
+  updateButtons();
   elements['request-panel'].setAttribute('aria-busy', 'true');
   if (!loaded) renderRequests();
   try {
@@ -133,11 +157,6 @@ async function loadRequests() {
     loaded = true;
     const selection = elements['plant-filter'].value;
     const plants = [...new Set(records.map((record) => record.plant))].sort((a, b) => a.localeCompare(b));
-    elements['known-plants'].replaceChildren(...plants.map((plant) => {
-      const option = node('option');
-      option.value = plant;
-      return option;
-    }));
     if (selection && !plants.includes(selection)) plants.push(selection);
     elements['plant-filter'].replaceChildren(...['', ...plants].map((plant) => {
       const option = node('option', plant || 'All plants');
@@ -156,7 +175,7 @@ async function loadRequests() {
   } finally {
     loading = false;
     activeList = undefined;
-    elements.refresh.disabled = false;
+    updateButtons();
     elements['request-panel'].setAttribute('aria-busy', 'false');
     if (!leaving) renderRequests();
     if (refreshQueued && !leaving) { refreshQueued = false; void loadRequests(); }
@@ -165,13 +184,19 @@ async function loadRequests() {
 
 function updateButtons() {
   for (const id of ['checkout', 'start', 'new-request', 'configure-simulation', 'material', 'quantity', 'plant']) {
-    elements[id].disabled = busy || running;
+    elements[id].disabled = busy || running || deleting;
   }
   elements.stop.disabled = !running;
   elements['close-request'].disabled = busy;
   elements['cancel-request'].disabled = busy;
   elements.checkout.textContent = busy ? 'Submitting...' : dialogMode === 'simulation' ? 'Use these values' : 'Submit request';
   elements.loop.dataset.state = running ? 'running' : 'idle';
+  elements.refresh.disabled = loading || deleting;
+  elements['cancel-delete'].disabled = deleting;
+  elements['confirm-delete'].disabled = deleting || loading;
+  elements['confirm-delete'].textContent = deleting ? 'Deleting...' : 'Delete request';
+  elements['delete-dialog'].setAttribute('aria-busy', String(deleting));
+  for (const button of deleteButtons) button.disabled = busy || running || deleting || loading;
 }
 
 function requestValues() {
@@ -196,7 +221,7 @@ function setResult(message, state) {
 }
 
 function openRequest(mode) {
-  if (busy || running) return;
+  if (busy || running || deleting) return;
   dialogMode = mode;
   dialogValues = requestValues();
   elements['dialog-title'].textContent = mode === 'simulation' ? 'Simulation values' : 'New material request';
@@ -211,6 +236,66 @@ function cancelRequest() {
   for (const [id, value] of Object.entries(dialogValues)) elements[id].value = value;
   updateSimulationValues();
   elements['request-dialog'].close();
+}
+
+function openDelete(record) {
+  if (leaving || busy || running || deleting || loading) return;
+  pendingDeletion = record;
+  elements['delete-title'].textContent = `Delete request #${record.request_id}?`;
+  elements['delete-description'].textContent = `${record.material} · ${record.quantity.toLocaleString()} units · ${record.plant}`;
+  elements['delete-dialog'].showModal();
+  elements['cancel-delete'].focus();
+}
+
+function focusDeleteAction(requestId) {
+  const button = deleteButtons.find((item) => item.dataset.requestId === requestId && !item.disabled);
+  (button || elements['new-request']).focus();
+}
+
+function cancelDelete() {
+  if (deleting) return;
+  const requestId = pendingDeletion?.request_id;
+  pendingDeletion = undefined;
+  elements['delete-dialog'].close();
+  focusDeleteAction(requestId);
+}
+
+async function deleteRequest() {
+  if (leaving || busy || running || deleting || loading || !pendingDeletion) return;
+  const record = pendingDeletion;
+  deleting = true;
+  updateButtons();
+  const controller = new AbortController();
+  activeDeletion = controller;
+  let failureMessage;
+  try {
+    const response = await fetch(`/material-requests/${record.request_id}`, {
+      method: 'DELETE',
+      signal: AbortSignal.any([controller.signal, AbortSignal.timeout(7000)]),
+    });
+    const data = await response.json();
+    if (!response.ok || data.success !== true) {
+      failureMessage = typeof data.message === 'string' ? data.message : undefined;
+      throw new Error('Deletion failed');
+    }
+    if (data.requestId !== record.request_id) throw new Error('Unexpected deletion response');
+    records = records.filter((item) => item.request_id !== record.request_id);
+    setResult(`Request deleted #${record.request_id}`, 'success');
+  } catch {
+    setResult(failureMessage || 'Deletion could not be confirmed. Refresh the list to check the outcome before trying again.', 'failure');
+  } finally {
+    elements['receipt-detail'].textContent = `${record.material} · ${record.quantity.toLocaleString()} units · ${record.plant}`;
+    activeDeletion = undefined;
+    pendingDeletion = undefined;
+    deleting = false;
+    elements['delete-dialog'].close();
+    updateButtons();
+    if (!leaving) {
+      renderRequests();
+      await loadRequests();
+      if (!leaving) focusDeleteAction(record.request_id);
+    }
+  }
 }
 
 function stopTraffic(message = 'Stopped') {
@@ -251,7 +336,7 @@ function validForm() {
 }
 
 async function checkout() {
-  if (leaving || busy || !validForm()) return;
+  if (leaving || busy || deleting || !validForm()) return;
   const request = requestValues();
   const simulated = running;
   busy = true;
@@ -325,6 +410,12 @@ elements['show-requests'].addEventListener('click', () => showView(false));
 elements['show-demo'].addEventListener('click', () => showView(true));
 elements['new-request'].addEventListener('click', () => openRequest('create'));
 elements['configure-simulation'].addEventListener('click', () => openRequest('simulation'));
+elements['cancel-delete'].addEventListener('click', cancelDelete);
+elements['confirm-delete'].addEventListener('click', deleteRequest);
+elements['delete-dialog'].addEventListener('cancel', (event) => {
+  event.preventDefault();
+  cancelDelete();
+});
 for (const id of ['close-request', 'cancel-request']) {
   elements[id].addEventListener('click', cancelRequest);
 }
@@ -342,7 +433,7 @@ elements['request-form'].addEventListener('submit', (event) => {
   return checkout();
 });
 elements.start.addEventListener('click', () => {
-  if (leaving || busy || running || !validForm()) return;
+  if (leaving || busy || running || deleting || !validForm()) return;
   running = true;
   deadline = Date.now() + 10 * 60 * 1000;
   deadlineTimer = setTimeout(() => stopTraffic('Finished after 10 minutes'), 10 * 60 * 1000);
@@ -362,6 +453,7 @@ window.addEventListener('pagehide', () => {
   refreshQueued = false;
   stopTraffic();
   activeList?.abort();
+  activeDeletion?.abort();
 });
 window.addEventListener('pageshow', (event) => {
   if (!event.persisted) return;

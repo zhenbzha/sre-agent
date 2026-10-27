@@ -6,7 +6,7 @@ const { readFileSync } = require('node:fs');
 const { join } = require('node:path');
 const { runInNewContext } = require('node:vm');
 
-function browser(success = true, fetchCheckout, fetchList, fetchHealth) {
+function browser(success = true, fetchCheckout, fetchList, fetchHealth, fetchDelete) {
   const elements = {};
   const calls = [];
   const timers = new Map();
@@ -21,11 +21,11 @@ function browser(success = true, fetchCheckout, fetchList, fetchHealth) {
       replaceChildren(...children) { this.children = children; },
       showModal() { this.open = true; },
       close() { this.open = false; },
-      focus() {},
+      focus() { elements.focused = this; },
     };
   }
   runInNewContext(readFileSync(join(__dirname, '../public/app.js'), 'utf8'), {
-    document: { createElement: element, getElementById(id) {
+    document: { createElement: element, createElementNS(namespace, tag) { return element(tag); }, getElementById(id) {
       elements[id] = element();
       elements[id].value = ({ material: 'Steel plate', quantity: '20', plant: 'Tampere', sort: 'newest' })[id] || '';
       return elements[id];
@@ -38,6 +38,10 @@ function browser(success = true, fetchCheckout, fetchList, fetchHealth) {
       };
       if (url === '/checkout' && fetchCheckout) return fetchCheckout(options);
       if (url === '/healthz' && fetchHealth) return fetchHealth(options);
+      if (options?.method === 'DELETE') {
+        assert.ok(fetchDelete, 'Unexpected deletion');
+        return fetchDelete(url, options);
+      }
       return { ok: url === '/healthz' || success, json: async () => success
         ? { success: true, requestId: '9007199254740993', message: 'Request saved' }
         : { success: false, message: 'Database unavailable.' } };
@@ -164,7 +168,6 @@ test('page is a Zava requests workspace with Finnish defaults and an accessible 
   const css = readFileSync(join(__dirname, '../public/styles.css'), 'utf8');
   assert.match(html, /Zava \| Material requests/);
   assert.match(html, /aria-label="Zava supply chain home">Zava</);
-  assert.match(html, /id="plant"[^>]*value="Tampere"/);
   assert.match(html, /id="sim-plant">Tampere</);
   assert.doesNotMatch(html, /Metso|Lyon|Nantes|Lille/);
   assert.match(html, /Submit request/);
@@ -184,6 +187,33 @@ test('page is a Zava requests workspace with Finnish defaults and an accessible 
   assert.doesNotMatch(css, /gradient|Georgia|Trebuchet/);
 });
 
+test('the plant field is a native selector with all demo plants, not filtered autocomplete', () => {
+  const html = readFileSync(join(__dirname, '../public/index.html'), 'utf8');
+  const selector = html.match(/<select id="plant" name="plant" required>([\s\S]*?)<\/select>/);
+  assert.ok(selector, 'Plant must use a labeled native select');
+  assert.deepEqual([...selector[1].matchAll(/<option value="([^"]+)"/g)].map((match) => match[1]),
+    ['Tampere', 'Helsinki', 'Turku']);
+  assert.match(selector[1], /<option value="Tampere" selected>Tampere<\/option>/);
+  assert.doesNotMatch(html, /<datalist|known-plants/);
+});
+
+test('a different plant selection survives list refreshes and is submitted unchanged', async () => {
+  for (const [plant, fetchList] of [
+    ['Helsinki', async () => listResponse([record(42, 'Tampere')])],
+    ['Turku', async () => ({ ok: false, json: async () => ({ message: 'Saved requests could not be loaded.' }) })],
+  ]) {
+    const f = browser(true, undefined, fetchList);
+    f.elements['new-request'].click();
+    f.elements.plant.value = plant;
+    await new Promise(setImmediate);
+    await f.elements.refresh.click();
+    assert.equal(f.elements.plant.value, plant);
+    await submit(f);
+    assert.equal(JSON.parse(f.calls.find(({ url }) => url === '/checkout').options.body).plant, plant);
+    assert.equal(f.elements['receipt-detail'].textContent, `Steel plate · 20 units · ${plant}`);
+  }
+});
+
 function listResponse(requests, hasMore = false) {
   return { ok: true, json: async () => ({ success: true, requests, limit: 100, hasMore }) };
 }
@@ -191,6 +221,179 @@ function listResponse(requests, hasMore = false) {
 function record(id, plant = 'Lyon', material = 'Wear plate') {
   return { request_id: String(id), plant, material, quantity: 4, created_at: '2026-10-22T10:00:00Z' };
 }
+
+function deleteButton(fixture, row = 0) {
+  return fixture.elements['request-rows'].children[row].children[5].children[0];
+}
+
+test('row deletion requires confirmation, describes the exact request and cancels without a write', async () => {
+  const material = '<img src=x onerror=alert(1)>';
+  const f = browser(true, undefined, async () => listResponse([record('9007199254740993', 'Tampere', material)]));
+  await new Promise(setImmediate);
+  const button = deleteButton(f);
+  assert.equal(button['aria-label'], 'Delete request #9007199254740993');
+  button.click();
+  assert.equal(f.elements['delete-dialog'].open, true);
+  assert.equal(f.elements['delete-title'].textContent, 'Delete request #9007199254740993?');
+  assert.equal(f.elements['delete-description'].textContent, `${material} · 4 units · Tampere`);
+  assert.deepEqual(f.elements['delete-description'].children, []);
+  assert.equal(f.elements.focused, f.elements['cancel-delete']);
+  f.elements['cancel-delete'].click();
+  assert.equal(f.elements['delete-dialog'].open, false);
+  assert.equal(f.elements.focused, button);
+  button.click();
+  f.elements['delete-dialog'].cancel({ preventDefault() {} });
+  assert.equal(f.elements['delete-dialog'].open, false);
+  await f.elements['confirm-delete'].click();
+  assert.equal(f.calls.filter(({ options }) => options?.method === 'DELETE').length, 0);
+});
+
+test('confirmed deletion sends one exact ID, refreshes the list and corrects an emptied final page', async () => {
+  let data = Array.from({ length: 11 }, (_, i) => record(i + 1));
+  const f = browser(true, undefined, async () => listResponse(data), undefined, async (url) => {
+    assert.equal(url, '/material-requests/1');
+    data = data.filter((item) => item.request_id !== '1');
+    return { ok: true, json: async () => ({ success: true, requestId: '1' }) };
+  });
+  await new Promise(setImmediate);
+  f.elements.next.click();
+  assert.equal(f.elements['page-info'].textContent, '11-11 of 11 requests');
+  deleteButton(f).click();
+  await f.elements['confirm-delete'].click();
+  assert.equal(f.calls.filter(({ options }) => options?.method === 'DELETE').length, 1);
+  assert.equal(f.calls.filter(({ url }) => url === '/material-requests').length, 2);
+  assert.equal(f.elements.result.textContent, 'Request deleted #1');
+  assert.equal(f.elements['request-count'].textContent, '10');
+  assert.equal(f.elements['page-info'].textContent, '1-10 of 10 requests');
+  assert.equal(f.elements['delete-dialog'].open, false);
+  assert.equal(f.elements.focused, f.elements['new-request']);
+  assert.equal(f.calls.filter(({ url }) => url === '/checkout').length, 0);
+  assert.equal(f.elements.attempts.textContent, '');
+});
+
+test('pending deletion prevents duplicate writes, simulation, submission and premature row removal', async () => {
+  let finish;
+  const f = browser(true, undefined, async () => listResponse([record(42)]), undefined,
+    () => new Promise((resolve) => { finish = resolve; }));
+  await new Promise(setImmediate);
+  deleteButton(f).click();
+  const pending = f.elements['confirm-delete'].click();
+  assert.equal(f.elements['confirm-delete'].textContent, 'Deleting...');
+  assert.equal(f.elements['confirm-delete'].disabled, true);
+  assert.equal(f.elements['cancel-delete'].disabled, true);
+  assert.equal(f.elements['new-request'].disabled, true);
+  assert.equal(deleteButton(f).disabled, true);
+  assert.equal(f.elements['request-rows'].children[0].children[0].textContent, '#42');
+  await f.elements['confirm-delete'].click();
+  f.elements['cancel-delete'].click();
+  f.elements['delete-dialog'].cancel({ preventDefault() {} });
+  assert.equal(f.elements['delete-dialog'].open, true);
+  f.elements.start.click();
+  await submit(f);
+  await f.elements.refresh.click();
+  assert.equal(f.calls.filter(({ options }) => options?.method === 'DELETE').length, 1);
+  assert.equal(f.calls.filter(({ url }) => url === '/checkout').length, 0);
+  assert.equal(f.calls.filter(({ url }) => url === '/material-requests').length, 1);
+  finish({ ok: true, json: async () => ({ success: true, requestId: '42' }) });
+  await pending;
+  assert.equal(f.calls.filter(({ url }) => url === '/material-requests').length, 2);
+  assert.equal(f.elements['new-request'].disabled, false);
+});
+
+test('successful deletion retains filters and stays successful when its follow-up read fails', async () => {
+  let reads = 0;
+  const f = browser(true, undefined, async () => ++reads === 1 ? listResponse([record(42), record(43)]) : {
+    ok: false, json: async () => ({ message: 'Saved requests could not be loaded.' }),
+  }, undefined, async () => ({ ok: true, json: async () => ({ success: true, requestId: '42' }) }));
+  await new Promise(setImmediate);
+  f.elements.search.value = '#42';
+  f.elements.search.input();
+  deleteButton(f).click();
+  await f.elements['confirm-delete'].click();
+  assert.equal(f.elements.result.textContent, 'Request deleted #42');
+  assert.equal(f.elements.result.dataset.state, 'success');
+  assert.equal(f.elements.search.value, '#42');
+  assert.equal(f.elements['page-info'].textContent, '0 matching requests');
+  assert.equal(f.elements['request-count'].textContent, '1');
+  assert.equal(f.elements['list-error'].hidden, false);
+  assert.match(f.elements['list-error'].textContent, /last loaded requests/);
+});
+
+test('failed or unconfirmed deletions retain the row and are never automatically retried', async () => {
+  for (const fetchDelete of [
+    async () => ({ ok: false, status: 503, json: async () => ({ success: false, message: 'Deletion could not be confirmed.' }) }),
+    async () => { throw new Error('Connection interrupted'); },
+    async () => ({ ok: true, json: async () => ({ success: true, requestId: '43' }) }),
+  ]) {
+    const f = browser(true, undefined, async () => listResponse([record(42)]), undefined, fetchDelete);
+    await new Promise(setImmediate);
+    deleteButton(f).click();
+    await f.elements['confirm-delete'].click();
+    assert.equal(f.elements.result.dataset.state, 'failure');
+    assert.match(f.elements.result.textContent, /could not be confirmed/);
+    assert.equal(f.elements['request-rows'].children[0].children[0].textContent, '#42');
+    assert.equal(f.elements['delete-dialog'].open, false);
+    assert.equal(f.calls.filter(({ options }) => options?.method === 'DELETE').length, 1);
+    assert.equal(f.elements.focused, deleteButton(f));
+  }
+});
+
+test('a concurrently deleted row is reconciled by refresh without claiming this client deleted it', async () => {
+  let data = [record(42)];
+  const f = browser(true, undefined, async () => listResponse(data), undefined, async () => {
+    data = [];
+    return { ok: false, status: 404, json: async () => ({ success: false, message: 'Request not found. It may already have been deleted.' }) };
+  });
+  await new Promise(setImmediate);
+  deleteButton(f).click();
+  await f.elements['confirm-delete'].click();
+  assert.match(f.elements.result.textContent, /already have been deleted/);
+  assert.equal(f.elements.result.dataset.state, 'failure');
+  assert.equal(f.elements['request-count'].textContent, '0');
+  assert.equal(f.elements['request-rows'].children[0].children[0].children[0].textContent, 'No requests yet');
+});
+
+test('navigation aborts pending deletion and history restoration never replays it', async () => {
+  const f = browser(true, undefined, async () => listResponse([record(42)]), undefined,
+    (url, { signal }) => new Promise((resolve, reject) => {
+      signal.addEventListener('abort', () => reject(signal.reason), { once: true });
+    }));
+  await new Promise(setImmediate);
+  deleteButton(f).click();
+  const pending = f.elements['confirm-delete'].click();
+  const callsAtLeave = f.calls.length;
+  f.events.pagehide();
+  await pending;
+  assert.equal(f.calls.length, callsAtLeave);
+  assert.equal(f.calls.find(({ options }) => options?.method === 'DELETE').options.signal.aborted, true);
+  assert.match(f.elements.result.textContent, /could not be confirmed/);
+  f.events.pageshow({ persisted: true });
+  await new Promise(setImmediate);
+  assert.equal(f.calls.filter(({ options }) => options?.method === 'DELETE').length, 1);
+  assert.equal(f.elements['delete-dialog'].open, false);
+});
+
+test('row deletion is unavailable while simulation is running or a list refresh is pending', async () => {
+  let finish;
+  let reads = 0;
+  const f = browser(true, undefined, () => ++reads === 1 ? Promise.resolve(listResponse([record(42)]))
+    : new Promise((resolve) => { finish = resolve; }));
+  await new Promise(setImmediate);
+  f.elements.start.click();
+  assert.equal(deleteButton(f).disabled, true);
+  deleteButton(f).click();
+  assert.notEqual(f.elements['delete-dialog'].open, true);
+  await new Promise(setImmediate);
+  f.elements.stop.click();
+  const refreshing = f.elements.refresh.click();
+  assert.equal(deleteButton(f).disabled, true);
+  deleteButton(f).click();
+  assert.notEqual(f.elements['delete-dialog'].open, true);
+  finish(listResponse([record(42)]));
+  await refreshing;
+  assert.equal(deleteButton(f).disabled, false);
+  assert.equal(f.calls.filter(({ options }) => options?.method === 'DELETE').length, 0);
+});
 
 test('request list displays real response fields, preserves bigint IDs and supports filtering and pagination', async () => {
   const data = Array.from({ length: 12 }, (_, i) => record(9007199254740993n + BigInt(i), i % 2 ? 'Lille' : 'Lyon'));
@@ -251,9 +454,11 @@ test('simulation configuration uses the request drawer without saving or generat
   assert.equal(f.elements['request-dialog'].open, true);
   assert.equal(f.elements.checkout.textContent, 'Use these values');
   f.elements.material.value = 'Crusher liner';
+  f.elements.plant.value = 'Turku';
   await submit(f);
   assert.equal(f.elements['request-dialog'].open, false);
   assert.equal(f.elements['sim-material'].textContent, 'Crusher liner');
+  assert.equal(f.elements['sim-plant'].textContent, 'Turku');
   assert.equal(f.calls.filter(({ url }) => url === '/checkout').length, 0);
   f.elements['new-request'].click();
   assert.equal(f.elements.checkout.textContent, 'Submit request');
@@ -264,10 +469,13 @@ test('cancelled drawer edits do not silently change simulation values', () => {
   f.elements['configure-simulation'].click();
   f.elements.material.value = 'Unsaved edit';
   f.elements.quantity.value = '0';
+  f.elements.plant.value = 'Helsinki';
   f.elements['cancel-request'].click();
   assert.equal(f.elements.material.value, 'Steel plate');
   assert.equal(Number(f.elements.quantity.value), 20);
   assert.equal(f.elements['sim-material'].textContent, 'Steel plate');
+  assert.equal(f.elements.plant.value, 'Tampere');
+  assert.equal(f.elements['sim-plant'].textContent, 'Tampere');
   assert.equal(f.elements['request-dialog'].open, false);
 });
 

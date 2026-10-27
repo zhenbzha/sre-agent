@@ -65,6 +65,7 @@ No connection pool can hide a deny rule behind an existing DB connection.
 | GET | `/app.js`, `/styles.css` | Only explicitly allowlisted static assets |
 | GET | `/healthz` | 200 JSON independent of database health |
 | GET | `/material-requests` | Latest 100 saved requests, newest ID first, with `limit` and `hasMore`; sanitized 503 if unavailable |
+| DELETE | `/material-requests/:requestId` | Permanently deletes one saved request; 200 with its string `requestId`, 404 if already absent, sanitized 503 if the outcome is uncertain |
 | POST | `/checkout` | 200 with `success`, `simulated`, `message` and database-generated string `requestId`; sanitized 503 on failure |
 
 Known paths with other methods return 405 with `Allow`; unknown paths return
@@ -80,6 +81,9 @@ The JSON body must be valid UTF-8; invalid bytes are rejected rather than silent
 replaced in saved material or plant names. Quantity must be an integer
 from 1 to 1,000,000. The body is limited to 2 KiB of raw bytes and five seconds. Invalid bodies
 produce explicit 400/408/413/415 responses without a database connection.
+Deletion accepts a positive PostgreSQL bigint request number, passed as a bound
+SQL parameter; invalid IDs return 400 before connecting. It never deletes
+multiple requests or simulates a successful deletion without PostgreSQL.
 The database-free `app-service` option retains simulated success but explicitly
 says it did not save anything and does not invent a request number.
 
@@ -114,6 +118,7 @@ Do not submit smoke-check traffic until initialization reports success.
 
 An interrupted or timed-out INSERT can have an uncertain commit outcome. Failure
 messages do not promise that no row was written; verify before retrying.
+The same applies to DELETE: a timeout does not prove that the row still exists.
 
 SDK telemetry is manual-only, unsampled (`samplingPercentage: 100`): one request
 named `POST /checkout`, plus a PostgreSQL dependency for each admitted attempt.
@@ -137,31 +142,47 @@ demo data and do not change the Azure deployment region.
 
 **New request** opens a keyboard-accessible modal drawer. Submit with the button
 or Enter; the confirmation displays the exact database-generated request number
-and refreshes the list. Failed submissions remain explicit and do not imply that
+and refreshes the list. Its Plant dropdown always offers the three synthetic demo
+plants: Tampere (default), Helsinki and Turku. The options do not depend on saved
+requests or database availability, and selecting a plant does not hide the other
+choices. The table's separate plant filter still reflects saved records.
+Failed submissions remain explicit and do not imply that
 retrying is safe. Failed refreshes retain any previously loaded rows with a stale
 data warning, rather than presenting an empty list as current data. Changing
 filters during the initial read retains the loading state, not an unavailable or
 empty state.
 
+Each row has a labeled trash icon. It opens a confirmation showing the request
+number, material, quantity and plant, with Cancel focused by default. Deletion is
+permanent and single-row only; it is disabled during simulation or another write.
+The row is removed only after the server confirms deletion, then the list is
+refreshed without resetting the current filters. Failed deletes remain explicit
+and trigger a read-only refresh, never an automatic retry. Deletions do not
+change the simulation's submission counters. Deleting a synthetic seed removes
+it normally, but an explicit later initialization can recreate that seed.
+
 **Demo controls** is a separate navigation view for traffic simulation, session
 counters, response timing and process health. **Edit values** configures the
 simulation without submitting a request. No traffic starts on page load.
 
-Listing uses the same fresh connections, verified TLS, five-second database
-deadline and shared four-attempt concurrency limit as submissions. Its request
-telemetry is `GET /material-requests` and its dependency is
+Listing and deletion use the same fresh connections, verified TLS, five-second
+database deadline and shared four-attempt concurrency limit as submissions.
+Listing's request telemetry is `GET /material-requests` and its dependency is
 `PostgreSQL request listing`, separate from the existing `POST /checkout` and
 `PostgreSQL connectivity` signals used by the demo alert and Live Report.
-The database-free workload returns an explicit 501 for listing; it does not
-fabricate saved requests. `/healthz` and startup remain database-independent.
+Deletion uses `DELETE /material-requests/:requestId` and
+`PostgreSQL request deletion`; actual IDs and fields are not included in telemetry.
+The database-free workload returns an explicit 501 for listing and deletion; it
+does not fabricate saved requests. `/healthz` and startup remain database-independent.
 
 Manual checkout makes one request. The traffic loop waits for each request to
 finish, then waits three seconds; it automatically stops at ten minutes. Stop
 aborts the browser request and any in-flight process-health check, and prevents
 subsequent attempts or follow-up health reads from that attempt; already-started
 server work can run until its five-second deadline. Leaving the page also aborts
-the list read. Returning through browser history refreshes read-only state without
-restarting simulation or replaying a submission. No POST traffic starts on load.
+the list read and any pending deletion. Returning through browser history refreshes
+read-only state without restarting simulation or replaying a submission or deletion.
+No write traffic starts on load.
 
 Supply this folder as the source app to the parent azd integration. Runtime start
 command is `npm start`; production dependencies must be installed on Linux during

@@ -10,6 +10,7 @@ const MAX_BODY_BYTES = 2048;
 const INSERT_REQUEST = 'INSERT INTO material_requests (material, quantity, plant) VALUES ($1, $2, $3) RETURNING request_id';
 const LIST_LIMIT = 100;
 const LIST_REQUESTS = 'SELECT request_id, material, quantity, plant, created_at FROM material_requests ORDER BY request_id DESC LIMIT $1';
+const DELETE_REQUEST = 'DELETE FROM material_requests WHERE request_id = $1 RETURNING request_id';
 class InputError extends Error {
   constructor(status, message) {
     super(message);
@@ -144,6 +145,61 @@ function createHandler({ createClient, getAccessToken, telemetry, env = process.
     });
   }
 
+  async function deleteRequest(response, requestId) {
+    const started = performance.now();
+    const workload = env.WORKLOAD_OPTION || 'app-service-postgresql';
+    let status = 503;
+    let outcome = 'busy';
+    let message = 'Deletion could not be confirmed. Refresh the list to check the outcome before trying again.';
+    if (!/^[1-9][0-9]{0,18}$/.test(requestId) || BigInt(requestId) > 9223372036854775807n) {
+      status = 400;
+      outcome = 'invalid-input';
+      message = 'Provide a valid material request number.';
+    } else if (workload === 'app-service-postgresql' && activeAttempts < MAX_DB_ATTEMPTS) {
+      activeAttempts += 1;
+      outcome = 'unavailable';
+      let completed = false;
+      try {
+        const result = await withDatabase({
+          createClient, getAccessToken, env, onTimeout: () => { outcome = 'timeout'; },
+        }, (client) => client.query(DELETE_REQUEST, [requestId]));
+        if (!Array.isArray(result.rows) || result.rows.length > 1 ||
+            (result.rows.length === 1 && result.rows[0]?.request_id !== requestId)) {
+          throw new Error('Unexpected database result');
+        }
+        completed = true;
+        status = result.rows.length === 1 ? 200 : 404;
+        outcome = status === 200 ? 'deleted' : 'not-found';
+        message = status === 200 ? 'Request deleted' : 'Request not found. It may already have been deleted.';
+      } catch {
+        // A timeout can leave the delete outcome uncertain; never promise a retry is safe.
+      } finally {
+        activeAttempts -= 1;
+        track('trackDependency', {
+          name: 'PostgreSQL request deletion', target: 'PostgreSQL',
+          dependencyTypeName: 'PostgreSQL', data: DELETE_REQUEST,
+          duration: performance.now() - started, success: completed,
+          resultCode: completed ? '0' : '1', properties: { simulated: 'true', outcome },
+        });
+      }
+    } else if (workload !== 'app-service-postgresql') {
+      outcome = workload === 'app-service' ? 'database-free' : 'configuration-unavailable';
+      if (workload === 'app-service') {
+        status = 501;
+        message = 'Saved requests cannot be deleted in the database-free workload.';
+      }
+    }
+    track('trackRequest', {
+      name: 'DELETE /material-requests/:requestId', url: 'http://localhost/material-requests/:requestId',
+      duration: performance.now() - started, resultCode: String(status), success: status === 200,
+      properties: { simulated: 'true', outcome, 'http.method': 'DELETE' },
+    });
+    if (status === 503) response.setHeader('Retry-After', '3');
+    return json(response, status, {
+      success: status === 200, ...(status === 200 ? { requestId } : {}), message,
+    });
+  }
+
   return async function handler(request, response) {
     response.setHeader('Cache-Control', 'no-store');
     response.setHeader('X-Content-Type-Options', 'nosniff');
@@ -154,8 +210,9 @@ function createHandler({ createClient, getAccessToken, telemetry, env = process.
     // Compare raw paths, without URL normalization or filesystem interpolation.
     const path = (request.url || '').split('?')[0];
     const asset = assets.get(path);
-    const allowedMethod = path === '/checkout' ? 'POST' : 'GET';
-    if (!asset && path !== '/healthz' && path !== '/checkout' && path !== '/material-requests') {
+    const requestItem = /^\/material-requests\/([^/]+)$/.exec(path);
+    const allowedMethod = requestItem ? 'DELETE' : path === '/checkout' ? 'POST' : 'GET';
+    if (!asset && !requestItem && path !== '/healthz' && path !== '/checkout' && path !== '/material-requests') {
       request.resume();
       return json(response, 404, { error: 'Not found' });
     }
@@ -176,6 +233,10 @@ function createHandler({ createClient, getAccessToken, telemetry, env = process.
     if (path === '/material-requests') {
       request.resume();
       return listRequests(response);
+    }
+    if (requestItem) {
+      request.resume();
+      return deleteRequest(response, requestItem[1]);
     }
 
     const started = performance.now();
