@@ -27,7 +27,7 @@ function browser(success = true, fetchCheckout, fetchList, fetchHealth) {
   runInNewContext(readFileSync(join(__dirname, '../public/app.js'), 'utf8'), {
     document: { createElement: element, getElementById(id) {
       elements[id] = element();
-      elements[id].value = ({ material: 'Steel plate', quantity: '20', plant: 'Lyon', sort: 'newest' })[id] || '';
+      elements[id].value = ({ material: 'Steel plate', quantity: '20', plant: 'Tampere', sort: 'newest' })[id] || '';
       return elements[id];
     } },
     window: { addEventListener(event, callback) { events[event] = callback; } },
@@ -63,12 +63,12 @@ test('UI submits material payload and displays the exact generated ID without nu
   assert.deepEqual(f.calls.map(({ url }) => url), ['/healthz', '/material-requests']);
   await submit(f);
   const submitted = f.calls.find(({ url }) => url === '/checkout');
-  assert.deepEqual(JSON.parse(submitted.options.body), { material: 'Steel plate', quantity: 20, plant: 'Lyon' });
+  assert.deepEqual(JSON.parse(submitted.options.body), { material: 'Steel plate', quantity: 20, plant: 'Tampere' });
   assert.equal(submitted.options.headers['Content-Type'], 'application/json');
   assert.equal(f.elements.result.textContent, 'Request saved #9007199254740993');
   assert.equal(f.elements.successes.textContent, 1);
   assert.equal(f.elements.health.textContent, 'Application is running');
-  assert.equal(f.elements['receipt-detail'].textContent, 'Steel plate · 20 units · Lyon');
+  assert.equal(f.elements['receipt-detail'].textContent, 'Steel plate · 20 units · Tampere');
   assert.equal(f.elements.checkout.textContent, 'Submit request');
 });
 
@@ -159,10 +159,14 @@ test('simulation deadline stops the loop and restores the form', async () => {
   assert.equal(f.timers.size, 0);
 });
 
-test('page is a Metso requests workspace with separate demo controls and an accessible request drawer', () => {
+test('page is a Zava requests workspace with Finnish defaults and an accessible request drawer', () => {
   const html = readFileSync(join(__dirname, '../public/index.html'), 'utf8');
   const css = readFileSync(join(__dirname, '../public/styles.css'), 'utf8');
-  assert.match(html, /Metso \| Material requests/);
+  assert.match(html, /Zava \| Material requests/);
+  assert.match(html, /aria-label="Zava supply chain home">Zava</);
+  assert.match(html, /id="plant"[^>]*value="Tampere"/);
+  assert.match(html, /id="sim-plant">Tampere</);
+  assert.doesNotMatch(html, /Metso|Lyon|Nantes|Lille/);
   assert.match(html, /Submit request/);
   for (const id of ['material', 'quantity', 'plant']) assert.ok(html.includes(`id="${id}"`));
   assert.doesNotMatch(html, /Reserve tickets|Lumen|concert|seats/i);

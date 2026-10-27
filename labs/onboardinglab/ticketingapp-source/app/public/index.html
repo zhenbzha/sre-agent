@@ -3,14 +3,14 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Metso | Material requests</title>
+  <title>Zava | Material requests</title>
   <link rel="stylesheet" href="/styles.css">
   <script src="/app.js" defer></script>
 </head>
 <body>
   <a class="skip-link" href="#main-content">Skip to content</a>
   <aside class="sidebar">
-    <a class="brand" href="/" aria-label="Metso supply chain home">Metso</a>
+    <a class="brand" href="/" aria-label="Zava supply chain home">Zava</a>
     <div class="workspace-name">Supply chain</div>
     <nav aria-label="Workspace">
       <button id="show-requests" type="button" class="nav-item" aria-current="page" aria-controls="requests-view">
@@ -85,7 +85,7 @@
         <div class="demo-grid">
           <section class="control-panel" aria-labelledby="simulation-title">
             <div class="panel-heading"><h2 id="simulation-title">Request simulation</h2><button id="configure-simulation" type="button" class="secondary">Edit values</button></div>
-            <dl class="simulation-values"><div><dt>Material</dt><dd id="sim-material">Steel plate</dd></div><div><dt>Quantity</dt><dd id="sim-quantity">20 units</dd></div><div><dt>Plant</dt><dd id="sim-plant">Lyon</dd></div></dl>
+            <dl class="simulation-values"><div><dt>Material</dt><dd id="sim-material">Steel plate</dd></div><div><dt>Quantity</dt><dd id="sim-quantity">20 units</dd></div><div><dt>Plant</dt><dd id="sim-plant">Tampere</dd></div></dl>
             <p class="control-help">Waits three seconds between requests. Stops automatically after ten minutes.</p>
             <div class="simulation-actions"><button id="start" type="button" class="primary">Start simulation</button><button id="stop" type="button" class="secondary" disabled>Stop simulation</button></div>
           </section>
@@ -107,7 +107,7 @@
       <div class="drawer-fields">
         <div class="field"><label for="material">Material</label><input id="material" name="material" maxlength="120" value="Steel plate" placeholder="Material name or part number" required></div>
         <div class="field"><label for="quantity">Quantity <span>(units)</span></label><input id="quantity" name="quantity" type="number" inputmode="numeric" min="1" max="1000000" step="1" value="20" required></div>
-        <div class="field"><label for="plant">Plant</label><input id="plant" name="plant" maxlength="80" value="Lyon" list="known-plants" placeholder="Plant name" required><datalist id="known-plants"></datalist></div>
+        <div class="field"><label for="plant">Plant</label><input id="plant" name="plant" maxlength="80" value="Tampere" list="known-plants" placeholder="Plant name" required><datalist id="known-plants"></datalist></div>
         <p id="form-status" role="status" aria-live="polite" hidden></p>
       </div>
       <div class="drawer-actions"><button id="cancel-request" type="button" class="secondary">Cancel</button><button id="checkout" type="submit" class="primary">Submit request</button></div>

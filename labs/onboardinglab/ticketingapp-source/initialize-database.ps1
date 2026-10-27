@@ -1,10 +1,13 @@
 #requires -Version 7.0
-[CmdletBinding()]
+[CmdletBinding(DefaultParameterSetName = 'Initialize')]
 param(
     [Parameter(Mandatory)][guid]$Subscription,
     [Parameter(Mandatory)][ValidatePattern('^[A-Za-z0-9_.()-]+$')][string]$ResourceGroup,
     [Parameter(Mandatory)][ValidatePattern('^[A-Za-z0-9-]+$')][string]$AppName,
-    [ValidatePattern('^[1-9][0-9]{0,18}$')][string]$RequestId
+    [Parameter(Mandatory, ParameterSetName = 'Read')]
+    [ValidatePattern('^[1-9][0-9]{0,18}$')][string]$RequestId,
+    [Parameter(Mandatory, ParameterSetName = 'Migrate')]
+    [switch]$MigrateDemoPlants
 )
 
 $ErrorActionPreference = 'Stop'
@@ -55,7 +58,8 @@ if ($latest.id -ne $deploymentId) { throw 'Deployment changed while waiting; ins
 $instances = @(az webapp list-instances --subscription $Subscription --resource-group $ResourceGroup --name $AppName -o json | ConvertFrom-Json)
 if (-not $instances.Count) { throw 'No running application instance is available.' }
 $run = "material-db-$([guid]::NewGuid().ToString('N'))"
-$argument = if ($RequestId) { " --request $RequestId" } else { '' }
+$argument = if ($RequestId) { " --request $RequestId" }
+    elseif ($MigrateDemoPlants) { ' --migrate-demo-plants' } else { '' }
 # Execute in the app container, not Kudu: only the app has the private DB path and identity.
 $command = 'cd /home/site/wwwroot && node initialize.js{0} > /home/LogFiles/{1}.log 2>&1; result=$?; printf "%s" "$result" > /home/LogFiles/{1}.exit' -f $argument, $run
 az webapp exec --subscription $Subscription --resource-group $ResourceGroup --name $AppName `
@@ -72,6 +76,10 @@ for ($attempt = 0; $attempt -lt 24; $attempt++) {
         $result = $output | ConvertFrom-Json
         if ($RequestId) {
             if ($result.request_id -ne $RequestId) { throw 'Database read-back returned the wrong request.' }
+        } elseif ($MigrateDemoPlants) {
+            if ($result.migrated -ne $true -or $null -eq $result.updated -or $result.updated -lt 0) {
+                throw 'Demo plant migration was not confirmed.'
+            }
         } elseif ($result.initialized -ne $true) { throw 'Database initialization was not confirmed.' }
         $result
         return

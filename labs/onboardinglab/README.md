@@ -681,6 +681,82 @@ The agent identities use Azure RBAC for resource and telemetry access. The agent
 
 ## Scenario 1: Incident workflow
 
+**Dedicated SCM demo shortcut (PowerShell)**
+
+For this fork's existing `sre-agent-scm` deployment only, run these one-line
+commands from `labs\onboardinglab`:
+
+Inject:
+
+```powershell
+.\scripts\scm-fault.ps1 inject
+```
+
+Reset:
+
+```powershell
+.\scripts\scm-fault.ps1 reset
+```
+
+[`scm-fault.ps1`](scripts/scm-fault.ps1) stores the fixed target parameters for
+`rg-flu-xzlxm7twvdxao` and delegates to the existing `fault.ps1`, preserving its
+alert checks and reset behavior. It uses your existing Azure CLI sign-in and
+does not depend on the selected azd environment. Reset removes the network
+fault; it does not start a separately stopped PostgreSQL server. For other
+environments, use the parameterized commands below.
+
+**Automatic recovery in the dedicated SCM deployment**
+
+The existing `alert-investigation` response plan can use Autonomous mode with
+the existing `alert-investigator`; no replacement agent or response plan is
+needed. This is an explicit exception for this dedicated demo, not a change to
+the standard lab's Review-mode defaults.
+
+The operator injects the fault and submits one valid material request. Azure
+Monitor routes the resulting alert to SRE, which must establish the cause from
+current evidence before applying the approved repair. After SRE repairs it,
+submit a new request and verify its generated number and stored fields.
+**Start simulation is not required.** Keep the one-line reset command as the
+fallback if SRE cannot repair the incident within ten minutes.
+
+[`scm-auto-repair.ps1`](scripts/scm-auto-repair.ps1) updates that existing
+configuration in place. Its default action is a read-only preview:
+
+```powershell
+.\scripts\scm-auto-repair.ps1
+```
+
+After explicit authorization, maintainers can apply or reapply the configuration:
+
+```powershell
+.\scripts\scm-auto-repair.ps1 -Action apply -BackupDirectory "$HOME\scm-repair-backups"
+```
+
+The helper snapshots current configuration, preserves unrelated settings and
+connections, installs a fail-closed **PreToolUse** command guard, denies generic
+Azure writes globally, and assigns only security-rule read/write at the existing
+`PostgreSqlFaultInjection` child resource. The guard permits exactly the fixed
+`access=Allow` command in this investigator's Autonomous loop. RBAC alone cannot
+restrict which rule property is written; the pre-execution command guard supplies
+that restriction. It blocks other mutations and delegation, and retains the
+read-only Work IQ and Foundry IQ lookups. The response plan is switched last and
+filtered to the dedicated checkout-failures alert name. No application deployment
+or recurring health schedule is enabled.
+
+This authorization does **not** permit PostgreSQL start/stop, public networking,
+other rule changes, tickets, mail or manual alert closure. A separately stopped
+database still requires operator action. Read-back configuration is not proof of
+successful recovery: verify the actual automatic investigation, successful
+managed-identity write in Activity Log, and a fresh saved request before any
+operator reset. Monitor condition **Resolved** is separate from user response
+**Acknowledged/Closed**.
+
+The standard recipes below remain Review-mode defaults. Reapplying the base
+recipe is not a substitute for reapplying and verifying this dedicated exception.
+For the platform contract, see [Agent Hooks](https://sre.azure.com/docs/capabilities/agent-hooks),
+[Hook Data Contract](https://sre.azure.com/docs/reference/hook-data-contract) and
+[Tool Access Policies](https://sre.azure.com/docs/concepts/tool-access-policies).
+
 **Trigger the incident**
 
 1. Inject the controlled fault for your selected workload option:

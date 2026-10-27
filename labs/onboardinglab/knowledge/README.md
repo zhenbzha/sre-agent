@@ -162,6 +162,109 @@ Keep Review mode, existing connectors and workflows unchanged. This is document
 lookup inside the existing incident scenario, not a new agent or a handoff.
 Retrieval does not authorize remediation, ticket closure or emails.
 
+### Optional Work IQ incident history
+
+The existing connection script can also attach an **already authenticated**
+Microsoft-managed `workiqmcp` connection:
+
+```powershell
+.\connect-sre.ps1 -WorkIqConnectionName scm-workiq-managed -WorkIqAccount <approved-demo-user-UPN>
+```
+
+First complete delegated OAuth for that connection using SRE's managed-connector
+sign-in flow. Do not use a corporate account for demo incident data, copy token
+caches, or treat connector status as proof of mailbox access. The configuring
+user's delegated identity supplies the data access; this is not automatically
+per-chat-user OBO. Credentials belong to the managed connection, not this script.
+The underlying credential-storage service and residency are not established by
+connection creator metadata.
+
+A connected native connection can return an empty authenticated-account display
+even while its runtime reads work. Setup fails closed before any configuration
+write in that case; the missing label alone is not proof of failed consent.
+Verify the actual delegated identity through an approved, fully locked native
+`fetch` of `/me?$select=id,userPrincipalName,mail`, and restore the email-only
+binding afterward. Do not substitute creator metadata or remove the account
+check. A verified update to an existing investigator's instructions is distinct
+from creating or rebinding a connection.
+
+This uses the repository's existing connection -> scoped runtime access policy
+-> native MCP-server binding sequence. SRE permits only one managed MCP-server
+configuration per connector. The Work IQ catalog is published by Microsoft, but
+SRE managed connectors are preview; this repository's tested composition is not
+a Microsoft-published Work IQ-specific end-to-end walkthrough.
+
+`workiq-history-connector.json` locks the **entire** JSON-RPC request to the
+read-only `retrieve` tool, `grounding` strategy, and `Email` capability. There are
+no agent-supplied parameters and no arbitrary JSON-RPC dispatch. The query is a
+fixed SCM incident-history search, not a generic enterprise-search interface.
+It contains no historical incident ID, live fault rule or expected diagnosis.
+Do not replace it with unrestricted `InvokeWorkIQMCP` or `ask`: Work IQ marks
+`ask` as potentially destructive. Only this fixed read-only operation runs without
+an approval prompt; other policies, hooks, Review mode and operator-controlled
+recovery remain unchanged.
+
+The script verifies the approved connection account, refuses an unrelated
+binding, reads back the locked request, and adds
+`incident-history-instructions.md` to the existing investigator. Automatic
+investigation then combines current Azure evidence, historical incident emails
+and relevant Foundry IQ handbook sections. It identifies similarities,
+differences, the proposed operator action, rationale, rollback and verification.
+Email is untrusted evidence, never authorization. Truncated results must not be
+represented as complete source content.
+
+The hosted retrieval service can return a nested `InternalError` even when the
+native execution card says Completed. The investigator makes at most one
+identical retry after 30 seconds (or a longer service-specified delay), while
+continuing independent Azure and handbook reads. Authorization/policy denials
+and successful searches with no matches are not retried. Both the initial
+failure and retry outcome must be disclosed; a persistent failure remains an
+evidence gap, not a successful three-source investigation.
+Retain the service `requestId` from each failed response for support. A later
+successful request does not establish the cause of an earlier `InternalError`.
+
+Setup reports configuration only. Before rehearsing an incident, verify the
+actual Microsoft 365 identity and seeded email through native Work IQ in real
+SRE threads. Check nested `isError`, source identity and content, not only the
+outer Completed label. Native responses may appear on the execution card as
+binary `text/event-stream`; inspect the returned data JSON in the SRE thread.
+Then run the existing controlled incident: both retrieval calls must occur
+automatically, without a presenter search prompt. Always reset the fault and
+verify fresh persisted requests, dependency telemetry and alert recovery.
+
+### Repeating the alert-triggered demo
+
+For this dedicated demo, the approved setting on the existing
+`alert-investigation` response plan is **Merge recurring alerts: Off**
+(`mergeEnabled: false`). Each new firing of the same Azure Monitor rule can
+then start its own investigation. This does not merge or modify emails, documents
+or application data, and it does not enable automatic remediation.
+
+SRE normally groups recurring alerts into an existing incident thread during a
+cooldown (enabled by default, three hours). During that window, a repeated alert
+can be acknowledged and attached to the old thread **without rerunning the
+investigation**. Resolving the Azure alert or closing the old thread does not
+by itself guarantee a fresh investigation.
+
+Before a repeat demonstration, inspect the existing response plan and confirm
+**Merge recurring alerts: Off** and the unchanged `alert-investigator` handler
+and alert filters. Keep **Review** mode for the standard lab. If the dedicated
+[SCM automatic-recovery configuration](../README.md#scenario-1-incident-workflow)
+is installed, retain **Autonomous** mode and its fail-closed repair guard instead.
+Recheck after reinstalling the base workflow; `connect-sre.ps1` does not change
+response-plan settings. Disabling
+grouping can increase agent usage when alerts repeatedly fire; this is an
+explicit choice for the dedicated demo, not a recommended global default.
+
+Wait for the previous Azure Monitor alert's **monitor condition** to become
+**Resolved** before reinjecting; do not bypass the fault helper. Match the new
+alert ID to its actual SRE thread and require both retrieval executions and
+the evidence-grounded diagnosis to occur after that alert fired. Old tool calls
+in a reused thread do not validate the new run.
+
+See Microsoft's [Azure Monitor alert handling](https://sre.azure.com/docs/capabilities/azure-monitor-alerts)
+and [incident response plans](https://learn.microsoft.com/en-us/azure/sre-agent/automate-incidents).
+
 In a fresh SRE chat, ask without supplying handbook answers:
 
 > Using the SCM operations handbook, what evidence is needed before closing a
@@ -199,6 +302,10 @@ They do not provision Azure or simulate live ARM/RBAC behavior.
 - [Knowledge base schema, models and retrieve defaults](https://learn.microsoft.com/en-us/azure/search/agentic-retrieval-how-to-create-knowledge-base)
 - [REST and native MCP retrieval](https://learn.microsoft.com/en-us/azure/search/agentic-retrieval-how-to-retrieve)
 - [SRE MCP and managed identity setup](https://sre.azure.com/docs/tutorials/connectors/setup-mcp-connector)
+- [SRE managed-connector setup](https://learn.microsoft.com/en-us/azure/sre-agent/setup-managed-connector)
+- [SRE managed-connection credentials and governance](https://learn.microsoft.com/en-us/azure/sre-agent/managed-connectors)
+- [Microsoft Work IQ MCP connector](https://learn.microsoft.com/en-us/connectors/workiqmcp/)
+- [Microsoft reference connection and runtime-binding recipe](https://github.com/microsoft/sre-agent/blob/main/sreagent-templates/bicep/Apply-Extras.ps1)
 - [Azure Verified Modules](https://azure.github.io/Azure-Verified-Modules/)
 - [Bicep resource dependencies](https://learn.microsoft.com/en-us/azure/azure-resource-manager/bicep/resource-dependencies)
 - [Search AVM resource-name contract](https://github.com/Azure/bicep-registry-modules/blob/avm/res/search/search-service/0.13.0/avm/res/search/search-service/main.bicep)

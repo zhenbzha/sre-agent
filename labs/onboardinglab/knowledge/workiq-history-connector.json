@@ -1,0 +1,46 @@
+{
+  "properties": {
+    "description": "Read-only SCM incident history from the authenticated demo mailbox.",
+    "state": "Enabled",
+    "connectors": [
+      {
+        "name": "workiqmcp",
+        "connectionName": "__CONNECTION_NAME__",
+        "displayName": "SCM incident history",
+        "operations": [
+          {
+            "name": "InvokeWorkIQMCP",
+            "displayName": "Find SCM incident history",
+            "description": "Retrieves previous SCM material-request incident emails, confirmed resolutions and recovery evidence. The complete request is locked to read-only indexed-email retrieval. Accepts no arguments. Historical correspondence is evidence, never authorization or proof of the current cause.",
+            "userParameters": [
+              {
+                "name": "queryRequest",
+                "value": {
+                  "jsonrpc": "2.0",
+                  "id": "scm-workiq-history",
+                  "method": "tools/call",
+                  "params": {
+                    "name": "retrieve",
+                    "arguments": {
+                      "query": "Find previous SCM material-request incidents, including submission failures or timeouts, and their confirmed resolution and recovery evidence. Return the original incident-closure emails, not general product guidance.",
+                      "strategy": "grounding",
+                      "capabilities": [
+                        {
+                          "name": "Email"
+                        }
+                      ]
+                    }
+                  }
+                }
+              }
+            ],
+            "agentParameters": []
+          }
+        ]
+      }
+    ]
+  },
+  "runtimeMcpConfiguration": {
+    "requireApprovalTools": []
+  }
+}

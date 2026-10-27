@@ -245,6 +245,11 @@ Describe 'Foundry IQ publishing and connector' {
     Context 'Existing SRE connector and investigator preservation' {
         BeforeEach {
             $global:ScmKnowledgeTest.storedConnector = $null
+            $global:ScmKnowledgeTest.workiqAccount = 'demo@example.invalid'
+            $global:ScmKnowledgeTest.workiqStatus = 'Connected'
+            $global:ScmKnowledgeTest.workiqBinding = $null
+            $global:ScmKnowledgeTest.corruptWorkiqRequest = $false
+            $global:ScmKnowledgeTest.workiqReadbackChange = ''
             $global:ScmKnowledgeTest.handler = @{
                 name = 'alert-investigator'
                 type = 'ExtendedAgent'
@@ -262,7 +267,49 @@ Describe 'Foundry IQ publishing and connector' {
                 $path = ([uri]$Uri).AbsolutePath
                 $data = if ($null -ne $Body) { $Body | ConvertFrom-Json -AsHashtable } else { $null }
                 $global:ScmKnowledgeTest.requests.Add(@{ Path = $path; Method = $Method; Body = $data; Redirects = $MaximumRedirection })
-                $result = if ($path -like '*/connectors/listSecrets') {
+                $result = if ($path -eq '/api/v2/connectorV2/connections/scm-workiq-managed') {
+                    @{ properties = @{
+                        connectorName = 'workiqmcp'
+                        overallStatus = $global:ScmKnowledgeTest.workiqStatus
+                        authenticatedUser = @{ name = $global:ScmKnowledgeTest.workiqAccount }
+                    } }
+                } elseif ($path -eq '/api/v2/connectorV2/mcpservers') {
+                    @{ value = @($global:ScmKnowledgeTest.workiqBinding | Where-Object { $_ }) }
+                } elseif ($path -like '*/accessPolicies/scm-workiq-managed-policy' -and $Method -eq 'PUT') {
+                    @{ name = 'scm-workiq-managed-policy' }
+                } elseif ($path -eq '/api/v2/connectorV2/mcpservers/scm-workiq-managed') {
+                    if ($Method -eq 'PUT') {
+                        $global:ScmKnowledgeTest.workiqBinding = Copy-TestObject $data
+                        $global:ScmKnowledgeTest.workiqBinding.name = 'scm-workiq-managed'
+                    }
+                    $response = Copy-TestObject $global:ScmKnowledgeTest.workiqBinding
+                    if (@($response.runtimeMcpConfiguration.requireApprovalTools).Count -eq 0) {
+                        $response.Remove('runtimeMcpConfiguration')
+                    }
+                    if ($global:ScmKnowledgeTest.corruptWorkiqRequest) {
+                        $response.properties.connectors[0].operations[0].userParameters[0].value.params.name = 'ask'
+                    }
+                    $operation = $response.properties.connectors[0].operations[0]
+                    $request = $operation.userParameters[0].value
+                    switch ($global:ScmKnowledgeTest.workiqReadbackChange) {
+                        reordered {
+                            $operation.userParameters = @([ordered]@{
+                                value = [ordered]@{
+                                    params = [ordered]@{ arguments = $request.params.arguments; name = $request.params.name }
+                                    method = $request.method; id = $request.id; jsonrpc = $request.jsonrpc
+                                }
+                                name = 'queryRequest'
+                            })
+                        }
+                        changedCase { $request.params.name = 'Retrieve' }
+                        objectInsteadOfArray { $operation.userParameters = $operation.userParameters[0] }
+                        addedParameter { $operation.userParameters += @{ name = 'other'; value = 'unexpected' } }
+                        addedAgentParameter { $operation.agentParameters = @(@{ name = 'queryRequest' }) }
+                    }
+                    $response
+                } elseif ($path -eq '/api/v1/mcp/connections/list') {
+                    @(@{ name = 'scm-workiq-managed'; tools = @(@{ name = 'scm-workiq-managed_workiqmcp_InvokeWorkIQMCP' }) })
+                } elseif ($path -like '*/connectors/listSecrets') {
                     @{ value = @($global:ScmKnowledgeTest.storedConnector | Where-Object { $_ }) }
                 } elseif ($path -like '*/testconnection') {
                     @{ success = $true; tools = @(@{ name = 'knowledge_base_retrieve' }) }
@@ -314,6 +361,123 @@ Describe 'Foundry IQ publishing and connector' {
             }
             { & (Join-Path $global:ScmKnowledgeTest.knowledgeRoot 'connect-sre.ps1') } | Should -Throw '*unrelated connector*'
             @($global:ScmKnowledgeTest.requests | Where-Object Method -ne GET).Count | Should -Be 0
+        }
+
+        It 'adds only fixed email retrieval and preserves investigator safeguards across repeated setup' {
+            $arguments = @{ WorkIqConnectionName = 'scm-workiq-managed'; WorkIqAccount = 'demo@example.invalid' }
+            $first = & (Join-Path $global:ScmKnowledgeTest.knowledgeRoot 'connect-sre.ps1') @arguments
+            $second = & (Join-Path $global:ScmKnowledgeTest.knowledgeRoot 'connect-sre.ps1') @arguments
+            $first.WorkIqHistoryTool | Should -BeExactly 'scm-workiq-managed_workiqmcp_InvokeWorkIQMCP'
+            $second.WorkIqRetrievalVerified | Should -BeFalse
+            $binding = $global:ScmKnowledgeTest.workiqBinding
+            $operation = $binding.properties.connectors[0].operations[0]
+            $operation.name | Should -BeExactly 'InvokeWorkIQMCP'
+            @($operation.agentParameters).Count | Should -Be 0
+            @($operation.userParameters).Count | Should -Be 1
+            $operation.userParameters[0].name | Should -BeExactly 'queryRequest'
+            $request = $operation.userParameters[0].value
+            $request.method | Should -BeExactly 'tools/call'
+            $request.params.name | Should -BeExactly 'retrieve'
+            $request.params.arguments.strategy | Should -BeExactly 'grounding'
+            @($request.params.arguments.capabilities).Count | Should -Be 1
+            $request.params.arguments.capabilities[0].name | Should -BeExactly 'Email'
+            $request.params.arguments.query | Should -Not -Match 'SCM-INC-017|5432|NSG|PostgreSqlFaultInjection'
+            @($binding.runtimeMcpConfiguration.requireApprovalTools).Count | Should -Be 0
+            $instructions = $global:ScmKnowledgeTest.handler.properties.instructions
+            ([regex]::Matches($instructions, '<!-- scm-workiq-history:start -->')).Count | Should -Be 1
+            $instructions | Should -Match 'automatically invoke'
+            $instructions | Should -Match 'operator-controlled'
+            $instructions | Should -Match 'at most one identical retry'
+            $instructions | Should -Match 'wait at least 30 seconds'
+            $instructions | Should -Match 'Do not retry authorization or policy denials'
+            $instructions | Should -Match 'Do not invoke\s+mutation tools'
+            $instructions | Should -Match 'overrides\s+earlier workflow steps'
+            $instructions | Should -Not -Match '__WORKIQ_TOOL__'
+            @($global:ScmKnowledgeTest.handler.properties.mcpTools | Where-Object { $_ -like '*workiq*' }).Count | Should -Be 1
+            foreach ($key in @('mode', 'tools', 'hooks')) {
+                ($global:ScmKnowledgeTest.handler.properties[$key] | ConvertTo-Json) |
+                    Should -BeExactly ($global:ScmKnowledgeTest.originalHandler.properties[$key] | ConvertTo-Json)
+            }
+        }
+
+        It 'rejects incorrect Work IQ identity or incomplete authorization before any writes' -ForEach @(
+            @{ Account = 'other@example.invalid'; Status = 'Connected' }
+            @{ Account = 'demo@example.invalid'; Status = 'Error' }
+        ) {
+            $global:ScmKnowledgeTest.workiqAccount = $Account
+            $global:ScmKnowledgeTest.workiqStatus = $Status
+            { & (Join-Path $global:ScmKnowledgeTest.knowledgeRoot 'connect-sre.ps1') `
+                -WorkIqConnectionName scm-workiq-managed -WorkIqAccount demo@example.invalid } |
+                Should -Throw '*explicitly approved account*'
+            @($global:ScmKnowledgeTest.requests | Where-Object Method -ne GET).Count | Should -Be 0
+        }
+
+        It 'fails closed on missing Work IQ account display without treating it as failed consent' -ForEach @(
+            @{ Account = '' }
+            @{ Account = $null }
+        ) {
+            $global:ScmKnowledgeTest.workiqAccount = $Account
+            { & (Join-Path $global:ScmKnowledgeTest.knowledgeRoot 'connect-sre.ps1') `
+                -WorkIqConnectionName scm-workiq-managed -WorkIqAccount demo@example.invalid } |
+                Should -Throw '*authenticated-account display is empty*'
+            @($global:ScmKnowledgeTest.requests | Where-Object Method -ne GET).Count | Should -Be 0
+        }
+
+        It 'refuses another managed Work IQ binding without overwriting it' {
+            $global:ScmKnowledgeTest.workiqBinding = @{
+                name = 'someone-elses-binding'
+                properties = @{ connectors = @(@{ name = 'workiqmcp' }) }
+            }
+            { & (Join-Path $global:ScmKnowledgeTest.knowledgeRoot 'connect-sre.ps1') `
+                -WorkIqConnectionName scm-workiq-managed -WorkIqAccount demo@example.invalid } |
+                Should -Throw '*unrelated managed connector binding*'
+            @($global:ScmKnowledgeTest.requests | Where-Object Method -ne GET).Count | Should -Be 0
+        }
+
+        It 'does not attach a gateway request whose locked read-only operation changed' {
+            $global:ScmKnowledgeTest.corruptWorkiqRequest = $true
+            { & (Join-Path $global:ScmKnowledgeTest.knowledgeRoot 'connect-sre.ps1') `
+                -WorkIqConnectionName scm-workiq-managed -WorkIqAccount demo@example.invalid } |
+                Should -Throw '*fully locked read-only*'
+            @($global:ScmKnowledgeTest.requests | Where-Object Method -eq PATCH).Count | Should -Be 0
+        }
+
+        It 'accepts reordered object keys in the locked Work IQ request readback' {
+            $global:ScmKnowledgeTest.workiqReadbackChange = 'reordered'
+            $result = & (Join-Path $global:ScmKnowledgeTest.knowledgeRoot 'connect-sre.ps1') `
+                -WorkIqConnectionName scm-workiq-managed -WorkIqAccount demo@example.invalid
+            $result.WorkIqHistoryTool | Should -BeExactly 'scm-workiq-managed_workiqmcp_InvokeWorkIQMCP'
+            @($global:ScmKnowledgeTest.requests | Where-Object Method -eq PATCH).Count | Should -Be 1
+        }
+
+        It 'rejects a locked request with <Change>' -ForEach @(
+            @{ Change = 'changedCase' }
+            @{ Change = 'objectInsteadOfArray' }
+            @{ Change = 'addedParameter' }
+            @{ Change = 'addedAgentParameter' }
+        ) {
+            $global:ScmKnowledgeTest.workiqReadbackChange = $Change
+            { & (Join-Path $global:ScmKnowledgeTest.knowledgeRoot 'connect-sre.ps1') `
+                -WorkIqConnectionName scm-workiq-managed -WorkIqAccount demo@example.invalid } |
+                Should -Throw '*fully locked read-only*'
+            @($global:ScmKnowledgeTest.requests | Where-Object Method -eq PATCH).Count | Should -Be 0
+        }
+
+        It 'preserves existing native binding policies and disabled API-key authentication' {
+            $arguments = @{ WorkIqConnectionName = 'scm-workiq-managed'; WorkIqAccount = 'demo@example.invalid' }
+            $null = & (Join-Path $global:ScmKnowledgeTest.knowledgeRoot 'connect-sre.ps1') @arguments
+            $global:ScmKnowledgeTest.workiqBinding.properties.policies = @(@{ name = 'existing-policy'; value = 'retain' })
+            $global:ScmKnowledgeTest.workiqBinding.properties.disableApiKeyAuth = $true
+            $null = & (Join-Path $global:ScmKnowledgeTest.knowledgeRoot 'connect-sre.ps1') @arguments
+            $global:ScmKnowledgeTest.workiqBinding.properties.policies[0].name | Should -BeExactly 'existing-policy'
+            $global:ScmKnowledgeTest.workiqBinding.properties.policies[0].value | Should -BeExactly 'retain'
+            $global:ScmKnowledgeTest.workiqBinding.properties.disableApiKeyAuth | Should -BeTrue
+        }
+
+        It 'requires both Work IQ connection and explicitly approved account' {
+            { & (Join-Path $global:ScmKnowledgeTest.knowledgeRoot 'connect-sre.ps1') -WorkIqConnectionName scm-workiq-managed } |
+                Should -Throw '*Supply both*'
+            Should -Invoke az -Times 0 -Exactly
         }
     }
 }

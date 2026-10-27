@@ -3,9 +3,9 @@
 const { withDatabase } = require('./database');
 
 const SEEDS = [
-  ['Steel plate', 20, 'Lyon', '2026-01-01T00:00:00Z'],
-  ['Bearing assembly', 12, 'Nantes', '2026-01-01T00:00:00Z'],
-  ['Conveyor belt', 4, 'Lille', '2026-01-01T00:00:00Z'],
+  ['Steel plate', 20, 'Tampere', '2026-01-01T00:00:00Z', 'Lyon'],
+  ['Bearing assembly', 12, 'Helsinki', '2026-01-01T00:00:00Z', 'Nantes'],
+  ['Conveyor belt', 4, 'Turku', '2026-01-01T00:00:00Z', 'Lille'],
 ];
 
 async function initialize(options) {
@@ -27,12 +27,23 @@ async function initialize(options) {
          SELECT $1::varchar(120), $2::integer, $3::varchar(80), $4::timestamptz
          WHERE NOT EXISTS (
            SELECT 1 FROM material_requests
-           WHERE material = $1 AND quantity = $2 AND plant = $3 AND created_at = $4::timestamptz
+           WHERE material = $1 AND quantity = $2 AND plant IN ($3, $5) AND created_at = $4::timestamptz
          ) RETURNING request_id`, seed);
       inserted += result.rowCount;
     }
     await client.query('COMMIT');
     return { initialized: true, inserted };
+  });
+}
+
+async function migrateDemoPlants(options) {
+  return withDatabase(options, async (client) => {
+    const result = await client.query(
+      `UPDATE material_requests
+       SET plant = CASE plant WHEN $1 THEN $2 WHEN $3 THEN $4 WHEN $5 THEN $6 END
+       WHERE plant IN ($1, $3, $5)`,
+      SEEDS.flatMap((seed) => [seed[4], seed[2]]));
+    return { migrated: true, updated: result.rowCount };
   });
 }
 
@@ -49,8 +60,9 @@ async function findRequest(options, requestId) {
 
 if (require.main === module) {
   const args = process.argv.slice(2);
-  if (args.length !== 0 && !(args.length === 2 && args[0] === '--request')) {
-    console.error('Usage: node initialize.js [--request REQUEST_ID]');
+  const migration = args.length === 1 && args[0] === '--migrate-demo-plants';
+  if (args.length !== 0 && !migration && !(args.length === 2 && args[0] === '--request')) {
+    console.error('Usage: node initialize.js [--request REQUEST_ID | --migrate-demo-plants]');
     process.exitCode = 1;
   } else {
     const { Client } = require('pg');
@@ -61,7 +73,8 @@ if (require.main === module) {
       createClient: (config) => new Client(config),
       getAccessToken: (scope) => credential.getToken(scope),
     };
-    const operation = args.length ? findRequest(options, args[1]) : initialize(options);
+    const operation = migration ? migrateDemoPlants(options)
+      : args.length ? findRequest(options, args[1]) : initialize(options);
     operation.then((result) => console.info(JSON.stringify(result))).catch(() => {
       console.error('Material-request database operation failed. Check configuration, identity, private connectivity and schema; no credentials are logged.');
       process.exitCode = 1;
@@ -69,4 +82,4 @@ if (require.main === module) {
   }
 }
 
-module.exports = { initialize, findRequest };
+module.exports = { initialize, findRequest, migrateDemoPlants };

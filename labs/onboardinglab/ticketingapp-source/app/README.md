@@ -71,7 +71,7 @@ Known paths with other methods return 405 with `Allow`; unknown paths return
 404. Submit JSON with `Content-Type: application/json`:
 
 ```json
-{"material":"Steel plate","quantity":20,"plant":"Lyon"}
+{"material":"Steel plate","quantity":20,"plant":"Tampere"}
 ```
 
 Material and plant are trimmed nonempty strings (maximum 120 and 80 characters);
@@ -89,8 +89,18 @@ says it did not save anything and does not invent a request number.
 material, quantity, plant and timestamp. It seeds three fixed synthetic records
 in one transaction, serializing concurrent initializers with a transaction lock.
 Rerunning it leaves existing requests untouched and inserts zero duplicate seeds.
+New seeds use Tampere, Helsinki and Turku. Matching legacy French seeds are
+recognized without adding duplicates, even before the optional migration.
 `node initialize.js --request 42` reads request 42 directly from PostgreSQL.
 Neither operation is an HTTP route or part of server startup.
+
+For an explicitly approved relabeling of synthetic demo data,
+`node initialize.js --migrate-demo-plants` changes only Lyon to Tampere, Nantes to
+Helsinki and Lille to Turku. It preserves IDs, materials, quantities, timestamps
+and all other plant names. A second run changes zero rows. Run it through
+`initialize-database.ps1 -MigrateDemoPlants` with the same explicit subscription,
+resource group and app name as initialization. Migration is never automatic on
+deployment, startup or an HTTP request.
 
 The parent azd post-deploy hook runs `initialize-database.ps1` inside one running
 App Service application container via authenticated `az webapp exec`. The helper waits for the specific Kudu deployment to complete and for `/healthz`
@@ -117,12 +127,13 @@ telemetry without blocking the app. Unavailable telemetry never fails checkout.
 
 ## Traffic and deployment handoff
 
-The Metso-themed workspace lists actual saved requests from PostgreSQL. Search,
+The Zava demo workspace lists actual saved requests from PostgreSQL. Search,
 plant filtering, date sorting and ten-row pages operate on the most recent 100
 records; the interface explicitly says when older records are outside that
 window. It does not invent requisition approval, inventory or fulfillment states.
-The graphite, mint and lime treatment references Metso's public website, with
-system fonts and a text wordmark; no external assets or UI libraries are loaded.
+The graphite, mint and lime layout uses system fonts and a Zava text wordmark;
+no external assets or UI libraries are loaded. Finnish plant labels are synthetic
+demo data and do not change the Azure deployment region.
 
 **New request** opens a keyboard-accessible modal drawer. Submit with the button
 or Enter; the confirmation displays the exact database-generated request number

@@ -69,7 +69,9 @@ custom_agent:
 
     Use GetAzCliHelp and RunAzCliReadCommands to inspect Azure resource state,
     configuration, metrics, and Activity Log evidence. Do not execute Azure
-    write operations.
+    write operations unless the administrator has installed the dedicated SCM
+    automatic-repair instructions and fail-closed PreToolUse guard. Only that
+    guard's exact authorized repair is an exception.
 
     When ReadFile, ListDir, FileSearch, and GrepSearch are available, inspect
     the connected source-code repositories for relevant application behavior,
@@ -112,5 +114,7 @@ custom_agent:
     investigation. Missing Azure Monitor incident-platform configuration or all
     telemetry query capabilities must fail validation before deployment.
 
-    Do not modify Azure resources. The operator performs the documented NSG
-    reset.
+    By default, do not modify Azure resources; the operator performs recovery.
+    The dedicated administrator-configured SCM repair guard, when present,
+    authorizes only its bounded action. All other recovery remains
+    operator-controlled.
